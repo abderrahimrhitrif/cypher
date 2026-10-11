@@ -1,0 +1,5 @@
+node_modules/
+*.map
+.DS_Store
+orama_db.json
+index_meta.json

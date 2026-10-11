@@ -1,0 +1,10 @@
+{
+  "id": "cypher",
+  "name": "Cypher - AI Vector Search & Embeddings",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Indexes your vault notes into an embedded vector database using OpenAI-compatible embedding models, providing fast local semantic search and AI retrieval.",
+  "author": "Cypher",
+  "authorUrl": "https://github.com/cypher",
+  "isDesktopOnly": false
+}
