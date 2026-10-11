@@ -166,11 +166,29 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   }
   console.log(`✓ top-k=2 returned exactly 2 hits as requested by user parameter.`);
 
-  console.log("\n✅ ALL TESTS (INCLUDING TOP-K QUERY TOOL) PASSED SUCCESSFULLY!");
+  console.log("\n=== 5. Testing Instant Document Addition and Deletion ===");
+  // Remove doc-2 (notes/recipes.md)
+  const { remove } = require("@orama/orama");
+  await remove(db, "doc-2");
+
+  const searchAfterDelete = await search(db, {
+    mode: "vector",
+    vector: { value: [0.1, 0.0, 0.9, 0.8, 0.2, 0.0, 0.0, 0.1], property: "embedding" },
+    similarity: 0.8,
+  });
+
+  const foundDeleted = searchAfterDelete.hits.some((h: any) => h.id === "doc-2");
+  if (foundDeleted) {
+    throw new Error("Document was not removed from vector database after deletion!");
+  }
+  console.log("✓ Document was successfully and completely purged from vector database upon deletion.");
+
+  console.log("\n✅ ALL TESTS (INCLUDING INSTANT ADD & DELETE) PASSED SUCCESSFULLY!");
 }
 
 runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
+
 

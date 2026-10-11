@@ -155,6 +155,31 @@ export class VectorDbService {
   }
 
   /**
+   * Removes all chunks of a file, or all files within a folder if path is a directory.
+   */
+  public async removeFileOrFolder(path: string): Promise<void> {
+    if (!this.db) return;
+
+    if (this.fileIndexMap.has(path)) {
+      await this.removeFileChunks(path);
+      return;
+    }
+
+    // Check if path is a folder containing indexed files
+    const prefix = path.endsWith("/") ? path : `${path}/`;
+    const pathsToRemove: string[] = [];
+    for (const indexedPath of this.fileIndexMap.keys()) {
+      if (indexedPath.startsWith(prefix) || indexedPath === path) {
+        pathsToRemove.push(indexedPath);
+      }
+    }
+
+    for (const p of pathsToRemove) {
+      await this.removeFileChunks(p);
+    }
+  }
+
+  /**
    * Renames a file's path in the metadata map.
    */
   public renameFile(oldPath: string, newPath: string): void {

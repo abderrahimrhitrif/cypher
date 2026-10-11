@@ -280,7 +280,7 @@ export class IndexerService {
       );
 
       await this.processFileChunks(file.path, chunks);
-      this.vectorDbService.scheduleSave(3000);
+      this.vectorDbService.scheduleSave(2000);
       return true;
     } catch (err) {
       console.error(`[Cypher] Error auto-indexing file ${file.path}:`, err);
@@ -289,11 +289,43 @@ export class IndexerService {
   }
 
   /**
-   * Removes a deleted file from the vector DB.
+   * Instantly indexes a newly created document and saves to database.
+   */
+  public async handleFileCreated(file: TFile): Promise<boolean> {
+    if (this.isFileExcluded(file) || file.extension !== "md") {
+      return false;
+    }
+
+    try {
+      const content = await this.vault.cachedRead(file);
+      const chunks = ChunkingService.chunkMarkdown(
+        file.path,
+        content,
+        this.settings.chunkSize,
+        this.settings.chunkOverlap,
+        file.stat.mtime
+      );
+
+      if (chunks.length > 0) {
+        await this.processFileChunks(file.path, chunks);
+        await this.vectorDbService.save();
+        console.log(`[Cypher] Instantly indexed new document: ${file.path} (${chunks.length} chunks)`);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error(`[Cypher] Error indexing newly added file ${file.path}:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Instantly removes a deleted file or folder from the vector DB and saves to disk.
    */
   public async handleFileDeleted(path: string): Promise<void> {
-    await this.vectorDbService.removeFileChunks(path);
-    this.vectorDbService.scheduleSave(3000);
+    await this.vectorDbService.removeFileOrFolder(path);
+    await this.vectorDbService.save();
+    console.log(`[Cypher] Instantly removed deleted document from vector DB: ${path}`);
   }
 
   /**
@@ -301,6 +333,6 @@ export class IndexerService {
    */
   public handleFileRenamed(oldPath: string, newPath: string): void {
     this.vectorDbService.renameFile(oldPath, newPath);
-    this.vectorDbService.scheduleSave(3000);
+    this.vectorDbService.scheduleSave(2000);
   }
 }

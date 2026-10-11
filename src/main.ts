@@ -133,6 +133,38 @@ export default class CypherPlugin extends Plugin {
     });
 
     // 6. Register Vault Event Listeners
+    // Instantly add newly created documents to the vector DB
+    this.registerEvent(
+      this.app.vault.on("create", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          setTimeout(async () => {
+            const indexed = await this.indexerService.handleFileCreated(file);
+            this.updateStatusBar();
+            if (indexed) {
+              new Notice(`⚡ Cypher: Added "${file.basename}" to vector DB`);
+            }
+          }, 100);
+        }
+      })
+    );
+
+    // Instantly remove deleted documents from the vector DB
+    this.registerEvent(
+      this.app.vault.on("delete", async (file) => {
+        const path = file.path;
+        const timer = this.modifiedDebounceMap.get(path);
+        if (timer) {
+          clearTimeout(timer);
+          this.modifiedDebounceMap.delete(path);
+        }
+
+        await this.indexerService.handleFileDeleted(path);
+        this.updateStatusBar();
+        new Notice(`⚡ Cypher: Removed "${file.name}" from vector DB`);
+      })
+    );
+
+    // Automatically update modified documents
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && file.extension === "md" && this.settings.autoIndexOnSave) {
@@ -141,19 +173,13 @@ export default class CypherPlugin extends Plugin {
       })
     );
 
+    // Update renamed documents
     this.registerEvent(
-      this.app.vault.on("delete", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          this.indexerService.handleFileDeleted(file.path);
-          this.updateStatusBar();
-        }
-      })
-    );
-
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
+      this.app.vault.on("rename", async (file, oldPath) => {
         if (file instanceof TFile && file.extension === "md") {
           this.indexerService.handleFileRenamed(oldPath, file.path);
+          await this.vectorDbService.save();
+          this.updateStatusBar();
         }
       })
     );
@@ -270,7 +296,7 @@ export default class CypherPlugin extends Plugin {
       if (indexed) {
         this.updateStatusBar();
       }
-    }, 2500);
+    }, 1000);
 
     this.modifiedDebounceMap.set(file.path, timer);
   }
