@@ -105,9 +105,11 @@ export class OnboardingModal extends Modal {
         dropdown.onChange((val) => {
           const found = PROVIDER_PRESETS.find((p) => p.name === val);
           if (found) {
-            this.settings.apiUrl = found.apiUrl;
-            this.settings.model = found.model;
+            this.settings.embeddingApiUrl = found.apiUrl;
+            this.settings.embeddingModel = found.model;
             this.settings.dimension = found.dimension;
+            // Also sync chat settings as a default if they are empty
+            if (!this.settings.chatApiUrl) this.settings.chatApiUrl = found.apiUrl;
             this.detectedDimension = found.dimension;
             this.connectionTested = false;
             this.render();
@@ -115,33 +117,37 @@ export class OnboardingModal extends Modal {
         });
       });
 
-    // API URL Setting
+    // Embedding API URL Setting
     new Setting(stepContainer)
-      .setName("API Base URL")
+      .setName("Embedding API Base URL")
       .setDesc("OpenAI-compatible embeddings endpoint (e.g., https://api.openai.com/v1 or http://localhost:11434/v1)")
       .addText((text) => {
         text
           .setPlaceholder("https://api.openai.com/v1")
-          .setValue(this.settings.apiUrl)
+          .setValue(this.settings.embeddingApiUrl || this.settings.apiUrl || "")
           .onChange((val) => {
-            this.settings.apiUrl = val.trim();
+            this.settings.embeddingApiUrl = val.trim();
             this.connectionTested = false;
             this.updateStartButtonState();
           });
         text.inputEl.addClass("cypher-input-wide");
       });
 
-    // API Key Setting
+    // Embedding API Key Setting
     new Setting(stepContainer)
-      .setName("API Key")
-      .setDesc("API Key for authentication (leave empty if using local Ollama / LM Studio without auth)")
+      .setName("Embedding API Key")
+      .setDesc("API Key for embeddings (leave empty if using local Ollama / LM Studio without auth)")
       .addText((text) => {
         text.inputEl.type = "password";
         text
           .setPlaceholder("sk-...")
-          .setValue(this.settings.apiKey)
+          .setValue(
+            this.settings.embeddingApiKey !== undefined
+              ? this.settings.embeddingApiKey
+              : this.settings.apiKey || ""
+          )
           .onChange((val) => {
-            this.settings.apiKey = val.trim();
+            this.settings.embeddingApiKey = val.trim();
             this.connectionTested = false;
             this.updateStartButtonState();
           });
@@ -155,9 +161,9 @@ export class OnboardingModal extends Modal {
       .addText((text) => {
         text
           .setPlaceholder("text-embedding-3-small")
-          .setValue(this.settings.model)
+          .setValue(this.settings.embeddingModel || this.settings.model || "")
           .onChange((val) => {
-            this.settings.model = val.trim();
+            this.settings.embeddingModel = val.trim();
             this.connectionTested = false;
             this.updateStartButtonState();
           });
@@ -184,6 +190,10 @@ export class OnboardingModal extends Modal {
       text: `📁 Detected ${totalFiles} markdown notes in your vault ready to index.`,
       cls: "cypher-summary-text",
     });
+    summaryCard.createEl("div", {
+      text: `💡 Note: You can configure a separate API & model for conversation / chat in Settings anytime.`,
+      cls: "cypher-summary-subtext",
+    });
 
     // Footer actions
     const footer = stepContainer.createDiv({ cls: "cypher-footer-actions" });
@@ -205,7 +215,9 @@ export class OnboardingModal extends Modal {
 
   private updateStartButtonState(): void {
     if (!this.startButtonEl) return;
-    const canStart = this.settings.apiUrl.trim().length > 0 && this.settings.model.trim().length > 0;
+    const url = this.settings.embeddingApiUrl || this.settings.apiUrl || "";
+    const model = this.settings.embeddingModel || this.settings.model || "";
+    const canStart = url.trim().length > 0 && model.trim().length > 0;
     this.startButtonEl.disabled = !canStart;
   }
 
@@ -224,9 +236,11 @@ export class OnboardingModal extends Modal {
     try {
       this.embeddingService.updateSettings(this.settings);
       const res = await this.embeddingService.testConnection(
-        this.settings.apiUrl,
-        this.settings.apiKey,
-        this.settings.model
+        this.settings.embeddingApiUrl || this.settings.apiUrl,
+        this.settings.embeddingApiKey !== undefined
+          ? this.settings.embeddingApiKey
+          : this.settings.apiKey,
+        this.settings.embeddingModel || this.settings.model
       );
 
       if (res.success && res.dimension) {

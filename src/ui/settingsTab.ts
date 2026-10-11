@@ -1,6 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type CypherPlugin from "../main";
-import { PROVIDER_PRESETS } from "../settings";
+import { EMBEDDING_PROVIDER_PRESETS, CHAT_PROVIDER_PRESETS, PROVIDER_PRESETS } from "../settings";
 import { OnboardingModal } from "./onboardingModal";
 
 export class CypherSettingsTab extends PluginSettingTab {
@@ -47,24 +47,28 @@ export class CypherSettingsTab extends PluginSettingTab {
     }
 
     // SECTION: API Configuration
-    containerEl.createEl("h3", { text: "Embedding API Configuration" });
+    // SECTION: Embedding API Configuration
+    containerEl.createEl("h3", { text: "1. Embedding Model & Vector API" });
+    containerEl.createEl("p", {
+      text: "Configure the API and model used to convert your notes into vector embeddings.",
+      cls: "setting-item-description",
+    });
 
-    // Presets
+    // Embedding Presets
     new Setting(containerEl)
-      .setName("Provider Preset")
-      .setDesc("Fill settings automatically for OpenAI, Ollama, LM Studio, or OpenRouter")
+      .setName("Embedding Provider Preset")
+      .setDesc("Quickly fill settings for embedding models (e.g. OpenAI, local Ollama, LM Studio)")
       .addDropdown((dropdown) => {
         dropdown.addOption("custom", "Custom / Other");
-        for (const preset of PROVIDER_PRESETS) {
+        for (const preset of EMBEDDING_PROVIDER_PRESETS) {
           dropdown.addOption(preset.name, preset.name);
         }
 
         dropdown.onChange(async (val) => {
-          const found = PROVIDER_PRESETS.find((p) => p.name === val);
+          const found = EMBEDDING_PROVIDER_PRESETS.find((p) => p.name === val);
           if (found) {
-            this.plugin.settings.apiUrl = found.apiUrl;
-            this.plugin.settings.model = found.model;
-            this.plugin.settings.chatModel = found.chatModel;
+            this.plugin.settings.embeddingApiUrl = found.apiUrl;
+            this.plugin.settings.embeddingModel = found.model;
             this.plugin.settings.dimension = found.dimension;
             await this.plugin.saveSettings();
             this.display();
@@ -72,31 +76,35 @@ export class CypherSettingsTab extends PluginSettingTab {
         });
       });
 
-    // API URL
+    // Embedding API URL
     new Setting(containerEl)
-      .setName("API Base URL")
-      .setDesc("The OpenAI-compatible embedding & chat API base URL")
+      .setName("Embedding API Base URL")
+      .setDesc("OpenAI-compatible embeddings endpoint (e.g., https://api.openai.com/v1 or http://localhost:11434/v1)")
       .addText((text) => {
         text
           .setPlaceholder("https://api.openai.com/v1")
-          .setValue(this.plugin.settings.apiUrl)
+          .setValue(this.plugin.settings.embeddingApiUrl || this.plugin.settings.apiUrl || "")
           .onChange(async (val) => {
-            this.plugin.settings.apiUrl = val.trim();
+            this.plugin.settings.embeddingApiUrl = val.trim();
             await this.plugin.saveSettings();
           });
       });
 
-    // API Key
+    // Embedding API Key
     new Setting(containerEl)
-      .setName("API Key")
-      .setDesc("Your API key (optional for local Ollama / LM Studio)")
+      .setName("Embedding API Key")
+      .setDesc("API key for embedding model (optional for local Ollama / LM Studio)")
       .addText((text) => {
         text.inputEl.type = "password";
         text
           .setPlaceholder("sk-...")
-          .setValue(this.plugin.settings.apiKey)
+          .setValue(
+            this.plugin.settings.embeddingApiKey !== undefined
+              ? this.plugin.settings.embeddingApiKey
+              : this.plugin.settings.apiKey || ""
+          )
           .onChange(async (val) => {
-            this.plugin.settings.apiKey = val.trim();
+            this.plugin.settings.embeddingApiKey = val.trim();
             await this.plugin.saveSettings();
           });
       });
@@ -108,9 +116,114 @@ export class CypherSettingsTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("text-embedding-3-small")
-          .setValue(this.plugin.settings.model)
+          .setValue(this.plugin.settings.embeddingModel || this.plugin.settings.model || "")
           .onChange(async (val) => {
-            this.plugin.settings.model = val.trim();
+            this.plugin.settings.embeddingModel = val.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // Dimensions & Test Embedding Button
+    new Setting(containerEl)
+      .setName("Vector Dimension")
+      .setDesc(`Current dimension: ${this.plugin.settings.dimension}. Test connection to auto-detect.`)
+      .addButton((btn) => {
+        btn.setButtonText("Test Embedding Connection").setCta().onClick(async () => {
+          btn.setButtonText("Testing...").setDisabled(true);
+          try {
+            const res = await this.plugin.embeddingService.testConnection();
+            if (res.success && res.dimension) {
+              this.plugin.settings.dimension = res.dimension;
+              await this.plugin.saveSettings();
+              new Notice(`Embedding connected! Model dimensions: ${res.dimension}`);
+              this.display();
+            } else {
+              new Notice(`Embedding test failed: ${res.error || "Unknown error"}`);
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`Error: ${msg}`);
+          } finally {
+            btn.setButtonText("Test Embedding Connection").setDisabled(false);
+          }
+        });
+      });
+
+    // SECTION: Conversation / Chat API Configuration
+    containerEl.createEl("h3", { text: "2. Conversation / Chat Model & API" });
+    containerEl.createEl("p", {
+      text: "Configure the separate API and model used for AI chat and answering questions with the query tool.",
+      cls: "setting-item-description",
+    });
+
+    // Chat Presets
+    new Setting(containerEl)
+      .setName("Chat Provider Preset")
+      .setDesc("Quickly fill settings for conversation models (e.g. GPT-4o-mini, Claude, local Llama 3.2)")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("custom", "Custom / Other");
+        for (const preset of CHAT_PROVIDER_PRESETS) {
+          dropdown.addOption(preset.name, preset.name);
+        }
+
+        dropdown.onChange(async (val) => {
+          const found = CHAT_PROVIDER_PRESETS.find((p) => p.name === val);
+          if (found) {
+            this.plugin.settings.chatApiUrl = found.apiUrl;
+            this.plugin.settings.chatModel = found.model;
+            await this.plugin.saveSettings();
+            this.display();
+          }
+        });
+      });
+
+    // Quick helper: Copy from Embedding API
+    new Setting(containerEl)
+      .setName("Use Same API as Embedding")
+      .setDesc("Copy the base URL and API key from your Embedding API configuration")
+      .addButton((btn) => {
+        btn.setButtonText("Copy from Embedding API").onClick(async () => {
+          this.plugin.settings.chatApiUrl =
+            this.plugin.settings.embeddingApiUrl || this.plugin.settings.apiUrl || "";
+          this.plugin.settings.chatApiKey =
+            this.plugin.settings.embeddingApiKey !== undefined
+              ? this.plugin.settings.embeddingApiKey
+              : this.plugin.settings.apiKey || "";
+          await this.plugin.saveSettings();
+          new Notice("Copied Embedding API credentials to Chat API");
+          this.display();
+        });
+      });
+
+    // Chat API URL
+    new Setting(containerEl)
+      .setName("Chat API Base URL")
+      .setDesc("OpenAI-compatible chat completions endpoint (e.g., https://api.openai.com/v1 or http://localhost:11434/v1)")
+      .addText((text) => {
+        text
+          .setPlaceholder("https://api.openai.com/v1")
+          .setValue(this.plugin.settings.chatApiUrl || this.plugin.settings.apiUrl || "")
+          .onChange(async (val) => {
+            this.plugin.settings.chatApiUrl = val.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // Chat API Key
+    new Setting(containerEl)
+      .setName("Chat API Key")
+      .setDesc("API key for chat model (optional for local Ollama / LM Studio)")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setPlaceholder("sk-...")
+          .setValue(
+            this.plugin.settings.chatApiKey !== undefined
+              ? this.plugin.settings.chatApiKey
+              : this.plugin.settings.apiKey || ""
+          )
+          .onChange(async (val) => {
+            this.plugin.settings.chatApiKey = val.trim();
             await this.plugin.saveSettings();
           });
       });
@@ -118,7 +231,7 @@ export class CypherSettingsTab extends PluginSettingTab {
     // Chat Model Name
     new Setting(containerEl)
       .setName("Chat Model Name")
-      .setDesc("e.g. gpt-4o-mini, llama3.2, mistral, qwen2.5-7b-instruct")
+      .setDesc("e.g. gpt-4o-mini, llama3.2, mistral, anthropic/claude-3.5-sonnet")
       .addText((text) => {
         text
           .setPlaceholder("gpt-4o-mini")
@@ -127,6 +240,24 @@ export class CypherSettingsTab extends PluginSettingTab {
             this.plugin.settings.chatModel = val.trim();
             await this.plugin.saveSettings();
           });
+      })
+      .addButton((btn) => {
+        btn.setButtonText("Test Chat API").onClick(async () => {
+          btn.setButtonText("Testing...").setDisabled(true);
+          try {
+            const res = await this.plugin.chatService.testChatConnection();
+            if (res.success) {
+              new Notice("Chat API connection successful!");
+            } else {
+              new Notice(`Chat API test failed: ${res.error || "Unknown error"}`);
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`Chat API Error: ${msg}`);
+          } finally {
+            btn.setButtonText("Test Chat API").setDisabled(false);
+          }
+        });
       });
 
     // Chat Top K Query Tool Parameter
@@ -147,7 +278,7 @@ export class CypherSettingsTab extends PluginSettingTab {
     // Chat System Prompt
     new Setting(containerEl)
       .setName("System Prompt")
-      .setDesc("Instructions controlling the assistant behavior. Strictly restricts model to notes knowledge.")
+      .setDesc("Instructions strictly restricting model to knowledge from your notes only.")
       .addTextArea((text) => {
         text
           .setValue(this.plugin.settings.chatSystemPrompt)
@@ -157,32 +288,6 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
         text.inputEl.rows = 6;
         text.inputEl.cols = 50;
-      });
-
-    // Dimensions & Test Button
-    const dimSetting = new Setting(containerEl)
-      .setName("Vector Dimension")
-      .setDesc(`Current dimension: ${this.plugin.settings.dimension}. Test connection to auto-detect.`)
-      .addButton((btn) => {
-        btn.setButtonText("Test Connection").setCta().onClick(async () => {
-          btn.setButtonText("Testing...").setDisabled(true);
-          try {
-            const res = await this.plugin.embeddingService.testConnection();
-            if (res.success && res.dimension) {
-              this.plugin.settings.dimension = res.dimension;
-              await this.plugin.saveSettings();
-              new Notice(`Connection successful! Model dimensions: ${res.dimension}`);
-              this.display();
-            } else {
-              new Notice(`Connection failed: ${res.error || "Unknown error"}`);
-            }
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`Error: ${msg}`);
-          } finally {
-            btn.setButtonText("Test Connection").setDisabled(false);
-          }
-        });
       });
 
     // SECTION: Database Management & Stats

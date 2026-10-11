@@ -32,8 +32,12 @@ export class ChatService {
   /**
    * Normalizes the API URL for chat completions endpoint.
    */
-  private getChatEndpointUrl(): string {
-    let clean = this.settings.apiUrl.trim();
+  public getChatEndpointUrl(overrideUrl?: string): string {
+    const raw =
+      overrideUrl !== undefined
+        ? overrideUrl
+        : this.settings.chatApiUrl || this.settings.apiUrl || "https://api.openai.com/v1";
+    let clean = raw.trim();
     if (clean.endsWith("/")) {
       clean = clean.slice(0, -1);
     }
@@ -44,6 +48,72 @@ export class ChatService {
       return clean;
     }
     return `${clean}/chat/completions`;
+  }
+
+  /**
+   * Tests chat API connection.
+   */
+  public async testChatConnection(
+    overrideUrl?: string,
+    overrideKey?: string,
+    overrideModel?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const endpoint = this.getChatEndpointUrl(overrideUrl);
+    const key =
+      overrideKey !== undefined
+        ? overrideKey
+        : this.settings.chatApiKey !== undefined
+        ? this.settings.chatApiKey
+        : this.settings.apiKey || "";
+    const model =
+      overrideModel !== undefined
+        ? overrideModel
+        : this.settings.chatModel || "gpt-4o-mini";
+
+    if (!endpoint) {
+      return { success: false, error: "Chat API URL is required" };
+    }
+    if (!model) {
+      return { success: false, error: "Chat Model name is required" };
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (key && key.trim().length > 0) {
+      headers["Authorization"] = `Bearer ${key.trim()}`;
+    }
+
+    try {
+      const response = await requestUrl({
+        url: endpoint,
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: model.trim(),
+          messages: [{ role: "user", content: "Hello" }],
+          max_tokens: 5,
+        }),
+        throw: false,
+      });
+
+      if (response.status === 200) {
+        return { success: true };
+      }
+
+      let errorDetail = response.text;
+      try {
+        if (response.json && response.json.error) {
+          errorDetail = response.json.error.message || JSON.stringify(response.json.error);
+        }
+      } catch {
+        // ignore
+      }
+      return { success: false, error: `HTTP ${response.status}: ${errorDetail}` };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
   }
 
   /**
@@ -124,8 +194,13 @@ export class ChatService {
       "Content-Type": "application/json",
     };
 
-    if (this.settings.apiKey && this.settings.apiKey.trim().length > 0) {
-      headers["Authorization"] = `Bearer ${this.settings.apiKey.trim()}`;
+    const chatKey =
+      this.settings.chatApiKey !== undefined
+        ? this.settings.chatApiKey
+        : this.settings.apiKey || "";
+
+    if (chatKey && chatKey.trim().length > 0) {
+      headers["Authorization"] = `Bearer ${chatKey.trim()}`;
     }
 
     // Build the messages payload starting with system prompt

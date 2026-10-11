@@ -34,15 +34,26 @@ export class EmbeddingService {
     overrideKey?: string,
     overrideModel?: string
   ): Promise<ApiTestResult> {
-    const url = overrideUrl !== undefined ? overrideUrl : this.settings.apiUrl;
-    const key = overrideKey !== undefined ? overrideKey : this.settings.apiKey;
-    const model = overrideModel !== undefined ? overrideModel : this.settings.model;
+    const url =
+      overrideUrl !== undefined
+        ? overrideUrl
+        : this.settings.embeddingApiUrl || this.settings.apiUrl || "";
+    const key =
+      overrideKey !== undefined
+        ? overrideKey
+        : this.settings.embeddingApiKey !== undefined
+        ? this.settings.embeddingApiKey
+        : this.settings.apiKey || "";
+    const model =
+      overrideModel !== undefined
+        ? overrideModel
+        : this.settings.embeddingModel || this.settings.model || "";
 
     if (!url) {
-      return { success: false, error: "API URL is required" };
+      return { success: false, error: "Embedding API URL is required" };
     }
     if (!model) {
-      return { success: false, error: "Model name is required" };
+      return { success: false, error: "Embedding Model name is required" };
     }
 
     try {
@@ -85,12 +96,14 @@ export class EmbeddingService {
    * Fetches embeddings for a batch of texts using current settings, with retry on rate-limit.
    */
   public async getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
-    return this.fetchEmbeddingsWithConfig(
-      texts,
-      this.settings.apiUrl,
-      this.settings.apiKey,
-      this.settings.model
-    );
+    const url = this.settings.embeddingApiUrl || this.settings.apiUrl || "";
+    const key =
+      this.settings.embeddingApiKey !== undefined
+        ? this.settings.embeddingApiKey
+        : this.settings.apiKey || "";
+    const model = this.settings.embeddingModel || this.settings.model || "";
+
+    return this.fetchEmbeddingsWithConfig(texts, url, key, model);
   }
 
   /**

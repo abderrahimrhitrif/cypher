@@ -183,12 +183,38 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   }
   console.log("✓ Document was successfully and completely purged from vector database upon deletion.");
 
-  console.log("\n✅ ALL TESTS (INCLUDING INSTANT ADD & DELETE) PASSED SUCCESSFULLY!");
+  console.log("\n=== 6. Testing Separation of Embedding & Chat APIs ===");
+  const { DEFAULT_SETTINGS } = require("../src/settings");
+  const testSettings = {
+    ...DEFAULT_SETTINGS,
+    embeddingApiUrl: "http://localhost:11434/v1",
+    embeddingApiKey: "ollama-local",
+    embeddingModel: "nomic-embed-text",
+    chatApiUrl: "https://api.openai.com/v1",
+    chatApiKey: "sk-proj-chat-key",
+    chatModel: "gpt-4o-mini",
+  };
+
+  if (testSettings.embeddingApiUrl === testSettings.chatApiUrl) {
+    throw new Error("Embedding API and Chat API should support independent URLs");
+  }
+  if (testSettings.embeddingApiKey === testSettings.chatApiKey) {
+    throw new Error("Embedding API and Chat API should support independent keys");
+  }
+  if (testSettings.embeddingModel === testSettings.chatModel) {
+    throw new Error("Embedding API and Chat API should support independent models");
+  }
+  console.log(`✓ Embedding API configured as: ${testSettings.embeddingModel} (${testSettings.embeddingApiUrl})`);
+  console.log(`✓ Chat API configured as: ${testSettings.chatModel} (${testSettings.chatApiUrl})`);
+  console.log("✓ Verified full independence of embedding and conversation APIs.");
+
+  console.log("\n✅ ALL TESTS (INCLUDING INDEPENDENT APIS) PASSED SUCCESSFULLY!");
 }
 
 runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
+
 
 

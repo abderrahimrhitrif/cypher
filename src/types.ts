@@ -1,9 +1,17 @@
 export interface CypherSettings {
-  // API Configuration
-  apiUrl: string;
-  apiKey: string;
-  model: string;
+  // Embedding API Configuration (Dedicated)
+  embeddingApiUrl: string;
+  embeddingApiKey: string;
+  embeddingModel: string;
   dimension: number;
+
+  // Chat / Conversation API Configuration (Dedicated)
+  chatApiUrl: string;
+  chatApiKey: string;
+  chatModel: string;
+  chatTopK: number; // Top-k parameter for query tool
+  chatSimilarityThreshold: number;
+  chatSystemPrompt: string;
 
   // Chunking Configuration
   chunkSize: number; // in characters
@@ -14,15 +22,14 @@ export interface CypherSettings {
   excludedFolders: string[];
   autoIndexOnSave: boolean;
 
-  // Chat Configuration
-  chatModel: string;
-  chatTopK: number; // Top-k parameter for query tool
-  chatSimilarityThreshold: number;
-  chatSystemPrompt: string;
-
   // State
   hasCompletedInitialIndexing: boolean;
   lastIndexedTime: number;
+
+  // Legacy fallback fields for backward compatibility
+  apiUrl?: string;
+  apiKey?: string;
+  model?: string;
 }
 
 export interface ChunkMetadata {
