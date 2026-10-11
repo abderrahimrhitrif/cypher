@@ -1,0 +1,8 @@
+node_modules/
+main.js
+*.map
+coverage/
+*.log
+.DS_Store
+orama_db.json
+index_meta.json

@@ -1,0 +1,10 @@
+{
+  "id": "cypher",
+  "name": "Cypher",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Vault-grounded chat and semantic search for Obsidian using OpenAI-compatible embedding and chat models.",
+  "author": "Abderrahim Rhitrif",
+  "authorUrl": "https://github.com/abderrahimrhitrif",
+  "isDesktopOnly": false
+}
