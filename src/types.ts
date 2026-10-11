@@ -14,6 +14,12 @@ export interface CypherSettings {
   excludedFolders: string[];
   autoIndexOnSave: boolean;
 
+  // Chat Configuration
+  chatModel: string;
+  chatTopK: number; // Top-k parameter for query tool
+  chatSimilarityThreshold: number;
+  chatSystemPrompt: string;
+
   // State
   hasCompletedInitialIndexing: boolean;
   lastIndexedTime: number;
@@ -74,4 +80,32 @@ export interface VectorDbStats {
   uniqueFilesCount: number;
   dimension: number;
   lastSaved?: number;
+}
+
+export interface ToolCallFunction {
+  name: string;
+  arguments: string;
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: ToolCallFunction;
+}
+
+export interface ChatToolResult {
+  query: string;
+  k: number;
+  results: SearchResult[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  timestamp: number;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  name?: string;
+  toolResult?: ChatToolResult;
 }

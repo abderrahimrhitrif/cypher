@@ -141,12 +141,36 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   if (restoredSearch.hits.length !== searchResults.hits.length) {
     throw new Error("Restored DB hit count mismatch");
   }
-  console.log(`✓ Restored DB produced identical hit count (${restoredSearch.hits.length}).`);
+  console.log("\n=== 4. Testing Top-K Query Tool (k parameter modification) ===");
+  // Test with k = 1
+  const searchK1 = await search(db, {
+    mode: "vector",
+    vector: { value: query, property: "embedding" },
+    limit: 1,
+    similarity: 0.8,
+  });
+  if (searchK1.hits.length !== 1) {
+    throw new Error(`Expected 1 result for k=1, got ${searchK1.hits.length}`);
+  }
+  console.log(`✓ top-k=1 returned exactly 1 hit: ${(searchK1.hits[0].document as any).title}`);
 
-  console.log("\n✅ ALL TESTS PASSED SUCCESSFULLY!");
+  // Test with k = 2
+  const searchK2 = await search(db, {
+    mode: "vector",
+    vector: { value: query, property: "embedding" },
+    limit: 2,
+    similarity: 0.8,
+  });
+  if (searchK2.hits.length !== 2) {
+    throw new Error(`Expected 2 results for k=2, got ${searchK2.hits.length}`);
+  }
+  console.log(`✓ top-k=2 returned exactly 2 hits as requested by user parameter.`);
+
+  console.log("\n✅ ALL TESTS (INCLUDING TOP-K QUERY TOOL) PASSED SUCCESSFULLY!");
 }
 
 runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
+

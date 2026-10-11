@@ -1,9 +1,11 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { DEFAULT_SETTINGS } from "./settings";
+import { ChatService } from "./services/chatService";
 import { EmbeddingService } from "./services/embeddingService";
 import { IndexerService } from "./services/indexerService";
 import { VectorDbService } from "./services/vectorDbService";
 import { CypherSettings } from "./types";
+import { CypherChatView, VIEW_TYPE_CYPHER_CHAT } from "./ui/chatView";
 import { OnboardingModal } from "./ui/onboardingModal";
 import { SearchModal } from "./ui/searchModal";
 import { CypherSettingsTab } from "./ui/settingsTab";
@@ -13,6 +15,7 @@ export default class CypherPlugin extends Plugin {
   public embeddingService!: EmbeddingService;
   public vectorDbService!: VectorDbService;
   public indexerService!: IndexerService;
+  public chatService!: ChatService;
 
   private statusBarItemEl: HTMLElement | null = null;
   private modifiedDebounceMap: Map<string, NodeJS.Timeout> = new Map();
@@ -37,6 +40,11 @@ export default class CypherPlugin extends Plugin {
       this.embeddingService,
       this.vectorDbService
     );
+    this.chatService = new ChatService(
+      this.settings,
+      this.embeddingService,
+      this.vectorDbService
+    );
 
     // Initialize the vector DB
     try {
@@ -45,19 +53,37 @@ export default class CypherPlugin extends Plugin {
       console.error("[Cypher] Error initializing vector database:", err);
     }
 
-    // 3. Register UI Components
+    // 3. Register Views
+    this.registerView(
+      VIEW_TYPE_CYPHER_CHAT,
+      (leaf) => new CypherChatView(leaf, this)
+    );
+
+    // 4. Register UI Components
     this.addSettingTab(new CypherSettingsTab(this.app, this));
 
     // Status bar item
     this.statusBarItemEl = this.addStatusBarItem();
     this.updateStatusBar();
 
-    // Ribbon icon
+    // Ribbon icons
+    this.addRibbonIcon("bot", "Cypher: AI Chat", () => {
+      this.activateChatView();
+    });
+
     this.addRibbonIcon("sparkles", "Cypher: Semantic Search", () => {
       this.openSearchModal();
     });
 
-    // 4. Register Commands
+    // 5. Register Commands
+    this.addCommand({
+      id: "open-chat",
+      name: "Open AI Chat (with Vault Query Tool)",
+      callback: () => {
+        this.activateChatView();
+      },
+    });
+
     this.addCommand({
       id: "semantic-search",
       name: "Semantic Search Vault",
@@ -106,7 +132,7 @@ export default class CypherPlugin extends Plugin {
       },
     });
 
-    // 5. Register Vault Event Listeners
+    // 6. Register Vault Event Listeners
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && file.extension === "md" && this.settings.autoIndexOnSave) {
@@ -132,7 +158,7 @@ export default class CypherPlugin extends Plugin {
       })
     );
 
-    // 6. First-Time Setup Launch
+    // 7. First-Time Setup Launch
     this.app.workspace.onLayoutReady(() => {
       this.updateStatusBar();
       if (!this.settings.hasCompletedInitialIndexing) {
@@ -173,6 +199,29 @@ export default class CypherPlugin extends Plugin {
     }
     if (this.indexerService) {
       this.indexerService.updateSettings(this.settings);
+    }
+    if (this.chatService) {
+      this.chatService.updateSettings(this.settings);
+    }
+  }
+
+  public async activateChatView(): Promise<void> {
+    const { workspace } = this.app;
+
+    let leaf: WorkspaceLeaf | null = null;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_CYPHER_CHAT);
+
+    if (leaves.length > 0) {
+      leaf = leaves[0];
+    } else {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) {
+        await leaf.setViewState({ type: VIEW_TYPE_CYPHER_CHAT, active: true });
+      }
+    }
+
+    if (leaf) {
+      workspace.revealLeaf(leaf);
     }
   }
 

@@ -64,6 +64,7 @@ export class CypherSettingsTab extends PluginSettingTab {
           if (found) {
             this.plugin.settings.apiUrl = found.apiUrl;
             this.plugin.settings.model = found.model;
+            this.plugin.settings.chatModel = found.chatModel;
             this.plugin.settings.dimension = found.dimension;
             await this.plugin.saveSettings();
             this.display();
@@ -74,7 +75,7 @@ export class CypherSettingsTab extends PluginSettingTab {
     // API URL
     new Setting(containerEl)
       .setName("API Base URL")
-      .setDesc("The OpenAI-compatible embedding API base URL")
+      .setDesc("The OpenAI-compatible embedding & chat API base URL")
       .addText((text) => {
         text
           .setPlaceholder("https://api.openai.com/v1")
@@ -100,7 +101,7 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Model Name
+    // Embedding Model Name
     new Setting(containerEl)
       .setName("Embedding Model Name")
       .setDesc("e.g. text-embedding-3-small, nomic-embed-text, bge-m3")
@@ -110,6 +111,35 @@ export class CypherSettingsTab extends PluginSettingTab {
           .setValue(this.plugin.settings.model)
           .onChange(async (val) => {
             this.plugin.settings.model = val.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // Chat Model Name
+    new Setting(containerEl)
+      .setName("Chat Model Name")
+      .setDesc("e.g. gpt-4o-mini, llama3.2, mistral, qwen2.5-7b-instruct")
+      .addText((text) => {
+        text
+          .setPlaceholder("gpt-4o-mini")
+          .setValue(this.plugin.settings.chatModel)
+          .onChange(async (val) => {
+            this.plugin.settings.chatModel = val.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // Chat Top K Query Tool Parameter
+    new Setting(containerEl)
+      .setName("Default Top-K Query Tool Results (k)")
+      .setDesc("Number of most relevant note excerpts retrieved when the model queries your vault")
+      .addSlider((slider) => {
+        slider
+          .setLimits(1, 20, 1)
+          .setValue(this.plugin.settings.chatTopK || 5)
+          .setDynamicTooltip()
+          .onChange(async (val) => {
+            this.plugin.settings.chatTopK = val;
             await this.plugin.saveSettings();
           });
       });
