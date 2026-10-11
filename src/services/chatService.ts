@@ -140,7 +140,7 @@ export class ChatService {
         role: "system",
         content:
           this.settings.chatSystemPrompt ||
-          "You are Cypher, an intelligent assistant for the user's Obsidian vault. Use the query_vault tool to look up information from their notes whenever helpful.",
+          "You are Cypher, an AI assistant strictly grounded in the user's Obsidian vault. You can ONLY answer using information found in the notes retrieved via `query_vault`. Never use outside world knowledge or speculate. If the information is not in the notes, state: 'I could not find this information in your notes.'",
       },
     ];
 

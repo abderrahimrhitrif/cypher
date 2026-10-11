@@ -144,6 +144,21 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
+    // Chat System Prompt
+    new Setting(containerEl)
+      .setName("System Prompt")
+      .setDesc("Instructions controlling the assistant behavior. Strictly restricts model to notes knowledge.")
+      .addTextArea((text) => {
+        text
+          .setValue(this.plugin.settings.chatSystemPrompt)
+          .onChange(async (val) => {
+            this.plugin.settings.chatSystemPrompt = val;
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.rows = 6;
+        text.inputEl.cols = 50;
+      });
+
     // Dimensions & Test Button
     const dimSetting = new Setting(containerEl)
       .setName("Vector Dimension")
