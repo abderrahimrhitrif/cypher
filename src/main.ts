@@ -41,7 +41,9 @@ export default class CypherPlugin extends Plugin {
     this.chatService = new ChatService(
       this.settings,
       this.embeddingService,
-      this.vectorDbService
+      this.vectorDbService,
+      this.app.vault,
+      this.app.metadataCache
     );
 
     try {

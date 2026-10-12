@@ -1,12 +1,15 @@
-import { requestUrl } from "obsidian";
-import { ChatMessage, ChatToolResult, CypherSettings, SearchResult, ToolCall } from "../types";
+import { MetadataCache, TFile, Vault, requestUrl } from "obsidian";
+import { ChatMessage, ChatToolResult, CypherSettings, NoteMeta, SearchResult, ToolCall } from "../types";
 import { EmbeddingService } from "./embeddingService";
 import { VectorDbService } from "./vectorDbService";
 
 export interface SendMessageOptions {
   topK?: number;
   similarityThreshold?: number;
-  onToolCall?: (toolCall: ToolCall, results: SearchResult[], query: string, k: number) => void;
+  onToolCall?: (
+    toolCall: ToolCall,
+    data: { query?: string; k?: number; results?: SearchResult[]; notes?: NoteMeta[] }
+  ) => void;
   signal?: AbortSignal;
 }
 
@@ -14,15 +17,21 @@ export class ChatService {
   private settings: CypherSettings;
   private embedSvc: EmbeddingService;
   private vecDb: VectorDbService;
+  private vault?: Vault;
+  private metaCache?: MetadataCache;
 
   constructor(
     settings: CypherSettings,
     embedSvc: EmbeddingService,
-    vecDb: VectorDbService
+    vecDb: VectorDbService,
+    vault?: Vault,
+    metaCache?: MetadataCache
   ) {
     this.settings = settings;
     this.embedSvc = embedSvc;
     this.vecDb = vecDb;
+    this.vault = vault;
+    this.metaCache = metaCache;
   }
 
   public updateSettings(settings: CypherSettings): void {
@@ -131,6 +140,28 @@ export class ChatService {
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "list_notes",
+          description:
+            "Lists all notes in the vault with their title, directory relative to the vault, and tags. " +
+            "Call this tool when the user asks what notes exist, what topics or tags are in the vault, for an overview or list of files, or to find notes in a folder.",
+          parameters: {
+            type: "object",
+            properties: {
+              tag: {
+                type: "string",
+                description: "Optional tag filter (e.g. 'project', 'ai')",
+              },
+              directory: {
+                type: "string",
+                description: "Optional directory/folder filter (e.g. 'work', 'daily')",
+              },
+            },
+          },
+        },
+      },
     ];
   }
 
@@ -142,6 +173,81 @@ export class ChatService {
     console.log(`[Cypher Chat] Executing query_vault tool for query: "${query}" (top-k=${k})`);
     const vec = await this.embedSvc.getQueryEmbedding(query);
     return this.vecDb.search(vec, k, threshold);
+  }
+
+  public executeListNotesTool(tagFilter?: string, dirFilter?: string): NoteMeta[] {
+    if (!this.vault) return [];
+    const files = this.vault.getMarkdownFiles();
+    const results: NoteMeta[] = [];
+    const cleanTag = tagFilter ? tagFilter.trim().replace(/^#/, "").toLowerCase() : "";
+    const cleanDir = dirFilter ? dirFilter.trim().replace(/^\/+|\/+$/g, "").toLowerCase() : "";
+
+    for (const file of files) {
+      if (this.isExcluded(file.path)) continue;
+
+      const dir = file.parent?.path && file.parent.path !== "/" ? file.parent.path : "/";
+      if (cleanDir && !dir.toLowerCase().includes(cleanDir)) {
+        continue;
+      }
+
+      const tags = this.extractTags(file);
+      if (cleanTag && !tags.some((t) => t.toLowerCase() === cleanTag)) {
+        continue;
+      }
+
+      results.push({
+        title: file.basename,
+        path: file.path,
+        dir,
+        tags,
+      });
+    }
+
+    return results;
+  }
+
+  private isExcluded(path: string): boolean {
+    for (const folder of this.settings.excludedFolders) {
+      const clean = folder.trim();
+      if (!clean) continue;
+      if (path.startsWith(clean + "/") || path === clean) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private extractTags(file: TFile): string[] {
+    if (!this.metaCache) return [];
+    const cache = this.metaCache.getFileCache(file);
+    const tags = new Set<string>();
+
+    if (cache?.tags) {
+      for (const t of cache.tags) {
+        const clean = t.tag.replace(/^#/, "").trim();
+        if (clean) tags.add(clean);
+      }
+    }
+
+    const fm = cache?.frontmatter;
+    if (fm) {
+      const raw = fm.tags ?? fm.tag;
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (typeof item === "string") {
+            const clean = item.replace(/^#/, "").trim();
+            if (clean) tags.add(clean);
+          }
+        }
+      } else if (typeof raw === "string") {
+        for (const item of raw.split(/[,\s]+/)) {
+          const clean = item.replace(/^#/, "").trim();
+          if (clean) tags.add(clean);
+        }
+      }
+    }
+
+    return Array.from(tags);
   }
 
   private formatResults(query: string, k: number, results: SearchResult[]): string {
@@ -159,6 +265,17 @@ export class ChatService {
       `Retrieved ${results.length} relevant note chunks from the user's vault for query "${query}":\n\n` +
       items.join("\n\n---\n\n")
     );
+  }
+
+  private formatNotes(notes: NoteMeta[]): string {
+    if (notes.length === 0) {
+      return "No notes found in the vault matching criteria.";
+    }
+    const lines = notes.map((n) => {
+      const tagList = n.tags.length > 0 ? n.tags.map((t) => `#${t}`).join(" ") : "none";
+      return `- Title: "${n.title}" | Directory: "${n.dir}" | Tags: [${tagList}] | Path: "${n.path}"`;
+    });
+    return `Found ${notes.length} notes in the vault:\n${lines.join("\n")}`;
   }
 
   public async sendMessage(
@@ -193,7 +310,7 @@ export class ChatService {
         role: "system",
         content:
           this.settings.chatSystemPrompt ||
-          "You are Cypher, an AI assistant strictly grounded in the user's Obsidian vault. You can ONLY answer using information found in the notes retrieved via `query_vault`. Never use outside world knowledge or speculate. If the information is not in the notes, state: 'I could not find this information in your notes.'",
+          "You are Cypher, an AI assistant strictly grounded in the user's Obsidian vault. You can ONLY answer using information found in the notes retrieved via `query_vault` or `list_notes`. Never use outside world knowledge or speculate. If the information is not in the notes, state: 'I could not find this information in your notes.'",
       },
     ];
 
@@ -268,13 +385,35 @@ export class ChatService {
 
             const query = args.query || "";
             const results = await this.executeQueryVaultTool(query, k, threshold);
-            toolResult = { query, k, results };
+            toolResult = { toolName: "query_vault", query, k, results };
 
             if (opts.onToolCall) {
-              opts.onToolCall(tc, results, query, k);
+              opts.onToolCall(tc, { query, k, results });
             }
 
             const out = this.formatResults(query, k, results);
+
+            messages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: out,
+            });
+          } else if (tc.function && tc.function.name === "list_notes") {
+            let args: { tag?: string; directory?: string } = {};
+            try {
+              args = JSON.parse(tc.function.arguments);
+            } catch {
+            }
+
+            const notes = this.executeListNotesTool(args.tag, args.directory);
+            toolResult = { toolName: "list_notes", notes };
+
+            if (opts.onToolCall) {
+              opts.onToolCall(tc, { notes });
+            }
+
+            const out = this.formatNotes(notes);
 
             messages.push({
               role: "tool",

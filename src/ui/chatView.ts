@@ -1,6 +1,6 @@
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type CypherPlugin from "../main";
-import { ChatMessage, SearchResult } from "../types";
+import { ChatMessage, ChatToolResult } from "../types";
 
 export const VIEW_TYPE_CYPHER_CHAT = "cypher-chat-view";
 
@@ -176,74 +176,131 @@ export class CypherChatView extends ItemView {
     }
   }
 
-  private renderToolCard(
-    container: HTMLElement,
-    result: { query: string; k: number; results: SearchResult[] }
-  ): void {
+  private renderToolCard(container: HTMLElement, result: ChatToolResult): void {
     const card = container.createDiv({ cls: "cypher-tool-card" });
 
-    const header = card.createDiv({ cls: "cypher-tool-header" });
-    const titleBox = header.createDiv({ cls: "cypher-tool-summary" });
-    titleBox.createSpan({ text: "Queried Vault: ", cls: "cypher-tool-tag" });
-    titleBox.createSpan({ text: `"${result.query}"`, cls: "cypher-tool-query" });
-    titleBox.createSpan({
-      text: ` (${result.results.length} / top-${result.k} notes)`,
-      cls: "cypher-tool-count",
-    });
-
-    const toggleBtn = header.createEl("button", {
-      text: "Show details ▾",
-      cls: "cypher-tool-toggle-btn",
-    });
-
-    const details = card.createDiv({
-      cls: "cypher-tool-details is-collapsed",
-    });
-
-    toggleBtn.onclick = () => {
-      const isCollapsed = details.hasClass("is-collapsed");
-      if (isCollapsed) {
-        details.removeClass("is-collapsed");
-        toggleBtn.setText("Hide details ▴");
-      } else {
-        details.addClass("is-collapsed");
-        toggleBtn.setText("Show details ▾");
-      }
-    };
-
-    if (result.results.length === 0) {
-      details.createDiv({
-        text: "No matching notes found above similarity threshold.",
-        cls: "cypher-tool-no-results",
+    if (result.notes) {
+      const header = card.createDiv({ cls: "cypher-tool-header" });
+      const titleBox = header.createDiv({ cls: "cypher-tool-summary" });
+      titleBox.createSpan({ text: "Vault Tool: ", cls: "cypher-tool-tag" });
+      titleBox.createSpan({ text: "list_notes", cls: "cypher-tool-query" });
+      titleBox.createSpan({
+        text: ` (${result.notes.length} notes found)`,
+        cls: "cypher-tool-count",
       });
+
+      const toggleBtn = header.createEl("button", {
+        text: "Show details ▾",
+        cls: "cypher-tool-toggle-btn",
+      });
+
+      const details = card.createDiv({ cls: "cypher-tool-details is-collapsed" });
+
+      toggleBtn.onclick = () => {
+        const isCollapsed = details.hasClass("is-collapsed");
+        if (isCollapsed) {
+          details.removeClass("is-collapsed");
+          toggleBtn.setText("Hide details ▴");
+        } else {
+          details.addClass("is-collapsed");
+          toggleBtn.setText("Show details ▾");
+        }
+      };
+
+      if (result.notes.length === 0) {
+        details.createDiv({
+          text: "No matching notes found.",
+          cls: "cypher-tool-no-results",
+        });
+        return;
+      }
+
+      for (const n of result.notes) {
+        const item = details.createDiv({ cls: "cypher-tool-item" });
+        const topRow = item.createDiv({ cls: "cypher-tool-item-top" });
+
+        const dirBadge = topRow.createSpan({ cls: "cypher-score-badge" });
+        dirBadge.setText(n.dir);
+
+        const link = topRow.createEl("a", {
+          text: n.title,
+          cls: "cypher-tool-link",
+        });
+        link.onclick = (e) => {
+          e.preventDefault();
+          this.openFile(n.path, e.metaKey || e.ctrlKey);
+        };
+
+        if (n.tags.length > 0) {
+          const tagsBox = topRow.createSpan({ cls: "cypher-tool-heading" });
+          tagsBox.setText(n.tags.map((t) => `#${t}`).join(" "));
+        }
+      }
       return;
     }
 
-    for (const r of result.results) {
-      const item = details.createDiv({ cls: "cypher-tool-item" });
-      const topRow = item.createDiv({ cls: "cypher-tool-item-top" });
-
-      const pct = Math.round(r.score * 100);
-      const badge = topRow.createSpan({ cls: "cypher-score-badge" });
-      badge.setText(`${pct}%`);
-
-      const link = topRow.createEl("a", {
-        text: r.title,
-        cls: "cypher-tool-link",
+    if (result.results) {
+      const header = card.createDiv({ cls: "cypher-tool-header" });
+      const titleBox = header.createDiv({ cls: "cypher-tool-summary" });
+      titleBox.createSpan({ text: "Queried Vault: ", cls: "cypher-tool-tag" });
+      titleBox.createSpan({ text: `"${result.query || ""}"`, cls: "cypher-tool-query" });
+      titleBox.createSpan({
+        text: ` (${result.results.length} / top-${result.k || 5} notes)`,
+        cls: "cypher-tool-count",
       });
-      link.onclick = (e) => {
-        e.preventDefault();
-        this.openFile(r.path, e.metaKey || e.ctrlKey);
+
+      const toggleBtn = header.createEl("button", {
+        text: "Show details ▾",
+        cls: "cypher-tool-toggle-btn",
+      });
+
+      const details = card.createDiv({ cls: "cypher-tool-details is-collapsed" });
+
+      toggleBtn.onclick = () => {
+        const isCollapsed = details.hasClass("is-collapsed");
+        if (isCollapsed) {
+          details.removeClass("is-collapsed");
+          toggleBtn.setText("Hide details ▴");
+        } else {
+          details.addClass("is-collapsed");
+          toggleBtn.setText("Show details ▾");
+        }
       };
 
-      if (r.heading) {
-        const heading = topRow.createSpan({ cls: "cypher-tool-heading" });
-        heading.setText(`› ${r.heading}`);
+      if (result.results.length === 0) {
+        details.createDiv({
+          text: "No matching notes found above similarity threshold.",
+          cls: "cypher-tool-no-results",
+        });
+        return;
       }
 
-      const snippet = item.createDiv({ cls: "cypher-tool-snippet" });
-      const clean = r.text.replace(/^\[Note:.*?\]\n*/, "");
-      snippet.setText(clean.length > 200 ? clean.slice(0, 200) + "..." : clean);
+      for (const r of result.results) {
+        const item = details.createDiv({ cls: "cypher-tool-item" });
+        const topRow = item.createDiv({ cls: "cypher-tool-item-top" });
+
+        const pct = Math.round(r.score * 100);
+        const badge = topRow.createSpan({ cls: "cypher-score-badge" });
+        badge.setText(`${pct}%`);
+
+        const link = topRow.createEl("a", {
+          text: r.title,
+          cls: "cypher-tool-link",
+        });
+        link.onclick = (e) => {
+          e.preventDefault();
+          this.openFile(r.path, e.metaKey || e.ctrlKey);
+        };
+
+        if (r.heading) {
+          const heading = topRow.createSpan({ cls: "cypher-tool-heading" });
+          heading.setText(`› ${r.heading}`);
+        }
+
+        const snippet = item.createDiv({ cls: "cypher-tool-snippet" });
+        const clean = r.text.replace(/^\[Note:.*?\]\n*/, "");
+        snippet.setText(clean.length > 200 ? clean.slice(0, 200) + "..." : clean);
+      }
     }
   }
 
@@ -307,8 +364,12 @@ export class CypherChatView extends ItemView {
       const assistantMsg = await this.plugin.chatService.sendMessage(this.messages, {
         topK: this.k,
         similarityThreshold: this.plugin.settings.chatSimilarityThreshold,
-        onToolCall: (_tc, results, query) => {
-          this.setStatus(`Queried vault for: "${query}" (Retrieved ${results.length} notes)...`);
+        onToolCall: (_tc, data) => {
+          if (data.notes) {
+            this.setStatus(`Listed notes in vault (${data.notes.length} notes found)...`);
+          } else if (data.query) {
+            this.setStatus(`Queried vault for: "${data.query}" (${data.results?.length ?? 0} results)...`);
+          }
         },
       });
 

@@ -201,12 +201,102 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   }
   console.log(`✓ Embedding API configured as: ${testSettings.embeddingModel} (${testSettings.embeddingApiUrl})`);
   console.log(`✓ Chat API configured as: ${testSettings.chatModel} (${testSettings.chatApiUrl})`);
-  console.log("✓ Verified full independence of embedding and conversation APIs.");
+  console.log("\n=== 7. Testing list_notes Tool Logic & Prompt ===");
+  const Module = require("module");
+  const origRequire = Module.prototype.require;
+  Module.prototype.require = function (id: string) {
+    if (id === "obsidian") {
+      return {
+        requestUrl: async () => ({ status: 200, json: {} }),
+        TFile: class {},
+        Vault: class {},
+        MetadataCache: class {},
+      };
+    }
+    return origRequire.apply(this, arguments);
+  };
+  const { ChatService } = require("../src/services/chatService");
+  const mockFiles = [
+    {
+      basename: "Architecture Overview",
+      path: "notes/architecture.md",
+      parent: { path: "notes" },
+    },
+    {
+      basename: "Pasta Recipes",
+      path: "recipes/pasta.md",
+      parent: { path: "recipes" },
+    },
+    {
+      basename: "Hidden Note",
+      path: ".obsidian/config.md",
+      parent: { path: ".obsidian" },
+    },
+  ];
 
-  console.log("\n✅ ALL TESTS (INCLUDING INDEPENDENT APIS) PASSED SUCCESSFULLY!");
+  const mockCache = {
+    getFileCache: (file: any) => {
+      if (file.path === "notes/architecture.md") {
+        return {
+          tags: [{ tag: "#ai" }, { tag: "#tech" }],
+          frontmatter: { tags: ["architecture", "vector"] },
+        };
+      }
+      if (file.path === "recipes/pasta.md") {
+        return {
+          frontmatter: { tag: "cooking" },
+        };
+      }
+      return null;
+    },
+  };
+
+  const mockVault = {
+    getMarkdownFiles: () => mockFiles,
+  };
+
+  const chatServiceInstance = new ChatService(
+    testSettings,
+    {} as any,
+    {} as any,
+    mockVault as any,
+    mockCache as any
+  );
+
+  const allNotes = chatServiceInstance.executeListNotesTool();
+  if (allNotes.length !== 2) {
+    throw new Error(`Expected 2 non-excluded notes, got ${allNotes.length}`);
+  }
+  if (allNotes[0].title !== "Architecture Overview" || allNotes[0].dir !== "notes") {
+    throw new Error("Note title or directory mismatch");
+  }
+  if (!allNotes[0].tags.includes("ai") || !allNotes[0].tags.includes("architecture")) {
+    throw new Error("Tags extraction failed");
+  }
+
+  const tagFiltered = chatServiceInstance.executeListNotesTool("cooking");
+  if (tagFiltered.length !== 1 || tagFiltered[0].title !== "Pasta Recipes") {
+    throw new Error("Tag filtering failed");
+  }
+
+  const dirFiltered = chatServiceInstance.executeListNotesTool(undefined, "notes");
+  if (dirFiltered.length !== 1 || dirFiltered[0].title !== "Architecture Overview") {
+    throw new Error("Directory filtering failed");
+  }
+
+  if (!testSettings.chatSystemPrompt.includes("list_notes")) {
+    throw new Error("System prompt does not instruct model about list_notes tool");
+  }
+
+  console.log(`✓ list_notes returned ${allNotes.length} notes with directories and tags.`);
+  console.log("✓ list_notes tag and directory filters verified.");
+  console.log("✓ System prompt includes list_notes instructions.");
+
+  console.log("\n✅ ALL TESTS (INCLUDING LIST_NOTES TOOL) PASSED SUCCESSFULLY!");
 }
 
 runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
+
