@@ -12,49 +12,45 @@ export interface FileIndexInfo {
 export class VectorDbService {
   private db: AnyOrama | null = null;
   private adapter: DataAdapter;
-  private pluginDir: string;
+  private dir: string;
   private dimension: number;
-  private fileIndexMap: Map<string, FileIndexInfo> = new Map();
-  private saveTimeout: NodeJS.Timeout | null = null;
+  private fileMap: Map<string, FileIndexInfo> = new Map();
+  private saveTimer: NodeJS.Timeout | null = null;
 
-  constructor(adapter: DataAdapter, pluginDir: string, dimension = 1536) {
+  constructor(adapter: DataAdapter, dir: string, dimension = 1536) {
     this.adapter = adapter;
-    this.pluginDir = pluginDir;
+    this.dir = dir;
     this.dimension = dimension;
   }
 
-  private get dbFilePath(): string {
-    return `${this.pluginDir}/orama_db.json`;
+  private get dbPath(): string {
+    return `${this.dir}/orama_db.json`;
   }
 
-  private get metaFilePath(): string {
-    return `${this.pluginDir}/index_meta.json`;
+  private get metaPath(): string {
+    return `${this.dir}/index_meta.json`;
   }
 
-  /**
-   * Initializes the vector database, restoring from disk if available or creating a new one.
-   */
   public async init(dimension: number): Promise<void> {
     this.dimension = dimension;
 
-    // Ensure plugin directory exists
-    if (!(await this.adapter.exists(this.pluginDir))) {
-      await this.adapter.mkdir(this.pluginDir);
+    if (!(await this.adapter.exists(this.dir))) {
+      await this.adapter.mkdir(this.dir);
     }
 
-    const dbExists = await this.adapter.exists(this.dbFilePath);
-    const metaExists = await this.adapter.exists(this.metaFilePath);
+    const hasDb = await this.adapter.exists(this.dbPath);
+    const hasMeta = await this.adapter.exists(this.metaPath);
 
-    if (dbExists && metaExists) {
+    if (hasDb && hasMeta) {
       try {
         console.log("[Cypher] Restoring vector database from disk...");
-        const rawDb = await this.adapter.read(this.dbFilePath);
+        const rawDb = await this.adapter.read(this.dbPath);
         this.db = (await restore("json", rawDb)) as AnyOrama;
 
-        const rawMeta = await this.adapter.read(this.metaFilePath);
+        const rawMeta = await this.adapter.read(this.metaPath);
         const parsedMeta = JSON.parse(rawMeta) as [string, FileIndexInfo][];
-        this.fileIndexMap = new Map(parsedMeta);
-        console.log(`[Cypher] Restored vector database with ${this.fileIndexMap.size} files indexed.`);
+        this.fileMap = new Map(parsedMeta);
+        console.log(`[Cypher] Restored vector database with ${this.fileMap.size} files indexed.`);
         return;
       } catch (err) {
         console.error("[Cypher] Failed to restore database from disk, creating fresh DB:", err);
@@ -77,28 +73,18 @@ export class VectorDbService {
         embedding: `vector[${this.dimension}]`,
       },
     });
-    this.fileIndexMap.clear();
+    this.fileMap.clear();
   }
 
-  /**
-   * Checks if a file is already indexed with the exact same content hash.
-   */
-  public isFileUpToDate(path: string, contentHash: string): boolean {
-    const info = this.fileIndexMap.get(path);
-    return !!info && info.hash === contentHash;
+  public isFileUpToDate(path: string, hash: string): boolean {
+    const info = this.fileMap.get(path);
+    return !!info && info.hash === hash;
   }
 
-  /**
-   * Returns a map of all indexed files and their hashes.
-   */
   public getAllIndexedFiles(): Map<string, FileIndexInfo> {
-    return new Map(this.fileIndexMap);
+    return new Map(this.fileMap);
   }
 
-  /**
-   * Upserts chunks and their embeddings for a specific file.
-   * Cleans up previous chunks of this file if present.
-   */
   public async upsertFileChunks(
     path: string,
     chunks: ChunkMetadata[],
@@ -108,93 +94,78 @@ export class VectorDbService {
       throw new Error("Vector database is not initialized");
     }
 
-    // Remove old chunks for this file if already indexed
     await this.removeFileChunks(path);
 
     if (chunks.length === 0 || embeddings.length === 0) {
       return;
     }
 
-    const documents = chunks.map((chunk, i) => ({
-      id: chunk.id,
-      path: chunk.path,
-      title: chunk.title,
-      heading: chunk.heading,
-      chunkIndex: chunk.chunkIndex,
-      text: chunk.text,
-      fileHash: chunk.fileHash,
+    const docs = chunks.map((c, i) => ({
+      id: c.id,
+      path: c.path,
+      title: c.title,
+      heading: c.heading,
+      chunkIndex: c.chunkIndex,
+      text: c.text,
+      fileHash: c.fileHash,
       embedding: embeddings[i],
     }));
 
-    await insertMultiple(this.db, documents);
+    await insertMultiple(this.db, docs);
 
-    this.fileIndexMap.set(path, {
+    this.fileMap.set(path, {
       hash: chunks[0].fileHash,
       chunkIds: chunks.map((c) => c.id),
       mtime: chunks[0].mtime,
     });
   }
 
-  /**
-   * Removes all chunks of a file from the database.
-   */
   public async removeFileChunks(path: string): Promise<void> {
     if (!this.db) return;
 
-    const existingInfo = this.fileIndexMap.get(path);
-    if (existingInfo && existingInfo.chunkIds.length > 0) {
-      for (const chunkId of existingInfo.chunkIds) {
+    const info = this.fileMap.get(path);
+    if (info && info.chunkIds.length > 0) {
+      for (const id of info.chunkIds) {
         try {
-          await remove(this.db, chunkId);
+          await remove(this.db, id);
         } catch {
-          // Chunk might already be removed
         }
       }
-      this.fileIndexMap.delete(path);
+      this.fileMap.delete(path);
     }
   }
 
-  /**
-   * Removes all chunks of a file, or all files within a folder if path is a directory.
-   */
   public async removeFileOrFolder(path: string): Promise<void> {
     if (!this.db) return;
 
-    if (this.fileIndexMap.has(path)) {
+    if (this.fileMap.has(path)) {
       await this.removeFileChunks(path);
       return;
     }
 
-    // Check if path is a folder containing indexed files
     const prefix = path.endsWith("/") ? path : `${path}/`;
-    const pathsToRemove: string[] = [];
-    for (const indexedPath of this.fileIndexMap.keys()) {
-      if (indexedPath.startsWith(prefix) || indexedPath === path) {
-        pathsToRemove.push(indexedPath);
+    const toRemove: string[] = [];
+    for (const key of this.fileMap.keys()) {
+      if (key.startsWith(prefix) || key === path) {
+        toRemove.push(key);
       }
     }
 
-    for (const p of pathsToRemove) {
+    for (const p of toRemove) {
       await this.removeFileChunks(p);
     }
   }
 
-  /**
-   * Renames a file's path in the metadata map.
-   */
   public renameFile(oldPath: string, newPath: string): void {
-    const info = this.fileIndexMap.get(oldPath);
+    const info = this.fileMap.get(oldPath);
     if (info) {
-      this.fileIndexMap.delete(oldPath);
-      this.fileIndexMap.set(newPath, info);
+      this.fileMap.delete(oldPath);
+      this.fileMap.set(newPath, info);
     }
   }
 
-  /**
-   * Searches the vector database using cosine similarity.
-   */
   public async search(
-    queryEmbedding: number[],
+    queryVec: number[],
     limit = 10,
     similarity = 0.5
   ): Promise<SearchResult[]> {
@@ -202,21 +173,21 @@ export class VectorDbService {
       throw new Error("Vector database is not initialized");
     }
 
-    const response = await search(this.db, {
+    const res = await search(this.db, {
       mode: "vector",
       vector: {
-        value: queryEmbedding,
+        value: queryVec,
         property: "embedding",
       },
       similarity,
       limit,
     });
 
-    if (!response || !response.hits) {
+    if (!res || !res.hits) {
       return [];
     }
 
-    return response.hits.map((hit) => {
+    return res.hits.map((hit) => {
       const doc = hit.document as Record<string, unknown>;
       return {
         id: String(hit.id),
@@ -230,70 +201,58 @@ export class VectorDbService {
     });
   }
 
-  /**
-   * Schedules a debounced save to disk.
-   */
   public scheduleSave(delayMs = 2000): void {
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout);
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
     }
-    this.saveTimeout = setTimeout(() => {
+    this.saveTimer = setTimeout(() => {
       this.save().catch((err) => console.error("[Cypher] Autosave failed:", err));
     }, delayMs);
   }
 
-  /**
-   * Immediately persists the vector database and metadata to disk.
-   */
   public async save(): Promise<void> {
     if (!this.db) return;
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout);
-      this.saveTimeout = null;
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
     }
 
     try {
-      if (!(await this.adapter.exists(this.pluginDir))) {
-        await this.adapter.mkdir(this.pluginDir);
+      if (!(await this.adapter.exists(this.dir))) {
+        await this.adapter.mkdir(this.dir);
       }
 
-      const serializedDb = await persist(this.db, "json");
-      await this.adapter.write(this.dbFilePath, serializedDb as string);
+      const rawDb = await persist(this.db, "json");
+      await this.adapter.write(this.dbPath, rawDb as string);
 
-      const serializedMeta = JSON.stringify(Array.from(this.fileIndexMap.entries()));
-      await this.adapter.write(this.metaFilePath, serializedMeta);
-      console.log(`[Cypher] Successfully saved vector database (${this.fileIndexMap.size} files).`);
+      const rawMeta = JSON.stringify(Array.from(this.fileMap.entries()));
+      await this.adapter.write(this.metaPath, rawMeta);
+      console.log(`[Cypher] Successfully saved vector database (${this.fileMap.size} files).`);
     } catch (err) {
       console.error("[Cypher] Error saving vector database to disk:", err);
       throw err;
     }
   }
 
-  /**
-   * Clears all documents and resets the database.
-   */
   public async clear(): Promise<void> {
     await this.createNewDb();
-    if (await this.adapter.exists(this.dbFilePath)) {
-      await this.adapter.remove(this.dbFilePath);
+    if (await this.adapter.exists(this.dbPath)) {
+      await this.adapter.remove(this.dbPath);
     }
-    if (await this.adapter.exists(this.metaFilePath)) {
-      await this.adapter.remove(this.metaFilePath);
+    if (await this.adapter.exists(this.metaPath)) {
+      await this.adapter.remove(this.metaPath);
     }
   }
 
-  /**
-   * Returns current statistics of the vector database.
-   */
   public getStats(): VectorDbStats {
-    let totalChunks = 0;
-    for (const info of this.fileIndexMap.values()) {
-      totalChunks += info.chunkIds.length;
+    let count = 0;
+    for (const info of this.fileMap.values()) {
+      count += info.chunkIds.length;
     }
 
     return {
-      documentCount: totalChunks,
-      uniqueFilesCount: this.fileIndexMap.size,
+      documentCount: count,
+      uniqueFilesCount: this.fileMap.size,
       dimension: this.dimension,
     };
   }

@@ -1,27 +1,27 @@
-import { App, Modal, Notice, TFile } from "obsidian";
+import { App, Modal, Notice, TFile, setIcon } from "obsidian";
 import { EmbeddingService } from "../services/embeddingService";
 import { VectorDbService } from "../services/vectorDbService";
 import { SearchResult } from "../types";
 
 export class SearchModal extends Modal {
-  private embeddingService: EmbeddingService;
-  private vectorDbService: VectorDbService;
+  private embedSvc: EmbeddingService;
+  private vecDb: VectorDbService;
 
-  private searchInputEl: HTMLInputElement | null = null;
-  private resultsContainerEl: HTMLElement | null = null;
+  private inputEl: HTMLInputElement | null = null;
+  private listEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
-  private debounceTimer: NodeJS.Timeout | null = null;
-  private selectedIndex = 0;
-  private currentResults: SearchResult[] = [];
+  private timer: NodeJS.Timeout | null = null;
+  private selectedIdx = 0;
+  private results: SearchResult[] = [];
 
   constructor(
     app: App,
-    embeddingService: EmbeddingService,
-    vectorDbService: VectorDbService
+    embedSvc: EmbeddingService,
+    vecDb: VectorDbService
   ) {
     super(app);
-    this.embeddingService = embeddingService;
-    this.vectorDbService = vectorDbService;
+    this.embedSvc = embedSvc;
+    this.vecDb = vecDb;
   }
 
   public onOpen(): void {
@@ -29,12 +29,11 @@ export class SearchModal extends Modal {
     contentEl.empty();
     contentEl.addClass("cypher-modal", "cypher-search-modal");
 
-    // Header & Input
-    const searchHeader = contentEl.createDiv({ cls: "cypher-search-header" });
-    const searchIcon = searchHeader.createSpan({ cls: "cypher-search-icon" });
-    searchIcon.setText("🔍");
+    const header = contentEl.createDiv({ cls: "cypher-search-header" });
+    const icon = header.createSpan({ cls: "cypher-search-icon" });
+    setIcon(icon, "search");
 
-    this.searchInputEl = searchHeader.createEl("input", {
+    this.inputEl = header.createEl("input", {
       type: "text",
       placeholder: "Search notes semantically with AI vector embeddings...",
       cls: "cypher-search-input",
@@ -43,36 +42,35 @@ export class SearchModal extends Modal {
     this.statusEl = contentEl.createDiv({ cls: "cypher-search-status" });
     this.statusEl.setText("Type a query to search your vector database");
 
-    this.resultsContainerEl = contentEl.createDiv({ cls: "cypher-results-list" });
+    this.listEl = contentEl.createDiv({ cls: "cypher-results-list" });
 
-    // Key event listeners
-    this.searchInputEl.focus();
-    this.searchInputEl.addEventListener("input", () => {
-      this.handleInput();
+    this.inputEl.focus();
+    this.inputEl.addEventListener("input", () => {
+      this.onInput();
     });
 
-    this.searchInputEl.addEventListener("keydown", (e: KeyboardEvent) => {
-      this.handleKeydown(e);
+    this.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+      this.onKeydown(e);
     });
   }
 
   public onClose(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+    if (this.timer) {
+      clearTimeout(this.timer);
     }
     const { contentEl } = this;
     contentEl.empty();
   }
 
-  private handleInput(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+  private onInput(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
     }
 
-    const query = this.searchInputEl?.value.trim() ?? "";
+    const query = this.inputEl?.value.trim() ?? "";
     if (!query) {
-      this.currentResults = [];
-      this.renderResults();
+      this.results = [];
+      this.render();
       if (this.statusEl) {
         this.statusEl.setText("Type a query to search your vector database");
       }
@@ -83,81 +81,77 @@ export class SearchModal extends Modal {
       this.statusEl.setText("Embedding query & searching vectors...");
     }
 
-    this.debounceTimer = setTimeout(async () => {
-      await this.performSearch(query);
+    this.timer = setTimeout(async () => {
+      await this.doSearch(query);
     }, 400);
   }
 
-  private async performSearch(query: string): Promise<void> {
+  private async doSearch(query: string): Promise<void> {
     try {
-      const queryEmbedding = await this.embeddingService.getQueryEmbedding(query);
-      const results = await this.vectorDbService.search(queryEmbedding, 15, 0.25);
+      const vec = await this.embedSvc.getQueryEmbedding(query);
+      const hits = await this.vecDb.search(vec, 15, 0.25);
 
-      this.currentResults = results;
-      this.selectedIndex = 0;
-      this.renderResults();
+      this.results = hits;
+      this.selectedIdx = 0;
+      this.render();
 
       if (this.statusEl) {
-        if (results.length === 0) {
+        if (hits.length === 0) {
           this.statusEl.setText("No semantic matches found above threshold.");
         } else {
-          this.statusEl.setText(`Found ${results.length} relevant note chunks:`);
+          this.statusEl.setText(`Found ${hits.length} relevant note chunks:`);
         }
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const error = err instanceof Error ? err.message : String(err);
       if (this.statusEl) {
-        this.statusEl.setText(`Search error: ${msg}`);
+        this.statusEl.setText(`Search error: ${error}`);
       }
       console.error("[Cypher] Search error:", err);
     }
   }
 
-  private renderResults(): void {
-    if (!this.resultsContainerEl) return;
-    this.resultsContainerEl.empty();
+  private render(): void {
+    if (!this.listEl) return;
+    this.listEl.empty();
 
-    if (this.currentResults.length === 0) {
+    if (this.results.length === 0) {
       return;
     }
 
-    this.currentResults.forEach((result, idx) => {
-      const itemEl = this.resultsContainerEl!.createDiv({
-        cls: `cypher-result-item ${idx === this.selectedIndex ? "is-selected" : ""}`,
+    this.results.forEach((r, idx) => {
+      const itemEl = this.listEl!.createDiv({
+        cls: `cypher-result-item ${idx === this.selectedIdx ? "is-selected" : ""}`,
       });
 
-      // Top row: Score + Title + Heading
       const topRow = itemEl.createDiv({ cls: "cypher-result-top" });
-      const scorePercent = Math.round(result.score * 100);
-      const scoreBadge = topRow.createSpan({ cls: "cypher-score-badge" });
-      scoreBadge.setText(`${scorePercent}%`);
+      const scorePct = Math.round(r.score * 100);
+      const badge = topRow.createSpan({ cls: "cypher-score-badge" });
+      badge.setText(`${scorePct}%`);
 
       const titleEl = topRow.createSpan({ cls: "cypher-result-title" });
-      titleEl.setText(result.title);
+      titleEl.setText(r.title);
 
-      if (result.heading) {
+      if (r.heading) {
         const headingEl = topRow.createSpan({ cls: "cypher-result-heading" });
-        headingEl.setText(`› ${result.heading}`);
+        headingEl.setText(`› ${r.heading}`);
       }
 
-      // Snippet
       const snippetEl = itemEl.createDiv({ cls: "cypher-result-snippet" });
-      snippetEl.setText(this.cleanSnippet(result.text));
+      snippetEl.setText(this.cleanSnippet(r.text));
 
-      // Click handler
       itemEl.onclick = (e) => {
-        this.openResult(result, e.metaKey || e.ctrlKey);
+        this.openResult(r, e.metaKey || e.ctrlKey);
       };
 
       itemEl.onmouseenter = () => {
-        this.selectedIndex = idx;
-        this.updateSelectionClasses();
+        this.selectedIdx = idx;
+        this.updateSelection();
       };
     });
   }
 
   private cleanSnippet(text: string): string {
-    // Remove context tag [Note: ...] if present
     const cleaned = text.replace(/^\[Note:.*?\]\n*/, "");
     if (cleaned.length > 250) {
       return cleaned.slice(0, 250) + "...";
@@ -165,11 +159,11 @@ export class SearchModal extends Modal {
     return cleaned;
   }
 
-  private updateSelectionClasses(): void {
-    if (!this.resultsContainerEl) return;
-    const items = this.resultsContainerEl.querySelectorAll(".cypher-result-item");
+  private updateSelection(): void {
+    if (!this.listEl) return;
+    const items = this.listEl.querySelectorAll(".cypher-result-item");
     items.forEach((el, idx) => {
-      if (idx === this.selectedIndex) {
+      if (idx === this.selectedIdx) {
         el.addClass("is-selected");
         el.scrollIntoView({ block: "nearest" });
       } else {
@@ -178,24 +172,24 @@ export class SearchModal extends Modal {
     });
   }
 
-  private handleKeydown(e: KeyboardEvent): void {
+  private onKeydown(e: KeyboardEvent): void {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (this.currentResults.length > 0) {
-        this.selectedIndex = (this.selectedIndex + 1) % this.currentResults.length;
-        this.updateSelectionClasses();
+      if (this.results.length > 0) {
+        this.selectedIdx = (this.selectedIdx + 1) % this.results.length;
+        this.updateSelection();
       }
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (this.currentResults.length > 0) {
-        this.selectedIndex =
-          (this.selectedIndex - 1 + this.currentResults.length) % this.currentResults.length;
-        this.updateSelectionClasses();
+      if (this.results.length > 0) {
+        this.selectedIdx =
+          (this.selectedIdx - 1 + this.results.length) % this.results.length;
+        this.updateSelection();
       }
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (this.currentResults[this.selectedIndex]) {
-        this.openResult(this.currentResults[this.selectedIndex], e.metaKey || e.ctrlKey);
+      if (this.results[this.selectedIdx]) {
+        this.openResult(this.results[this.selectedIdx], e.metaKey || e.ctrlKey);
       }
     } else if (e.key === "Escape") {
       this.close();
@@ -209,12 +203,6 @@ export class SearchModal extends Modal {
     if (file instanceof TFile) {
       const leaf = this.app.workspace.getLeaf(newLeaf);
       await leaf.openFile(file);
-
-      // Attempt to jump to heading or search occurrence
-      const view = this.app.workspace.getActiveViewOfType(require("obsidian").MarkdownView);
-      if (view && result.heading) {
-        // Open file succeeded
-      }
     } else {
       new Notice(`Could not open file: ${result.path}`);
     }

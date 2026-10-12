@@ -1,6 +1,6 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting, requestUrl } from "obsidian";
 import type CypherPlugin from "../main";
-import { EMBEDDING_PROVIDER_PRESETS, CHAT_PROVIDER_PRESETS, PROVIDER_PRESETS } from "../settings";
+import { EMBEDDING_PROVIDER_PRESETS, CHAT_PROVIDER_PRESETS } from "../settings";
 import { OnboardingModal } from "./onboardingModal";
 
 export class CypherSettingsTab extends PluginSettingTab {
@@ -16,7 +16,6 @@ export class CypherSettingsTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.addClass("cypher-settings-tab");
 
-    // Header
     const header = containerEl.createDiv({ cls: "cypher-settings-header" });
     header.createEl("h2", { text: "Cypher - AI Vector Search Settings" });
     header.createEl("p", {
@@ -24,10 +23,9 @@ export class CypherSettingsTab extends PluginSettingTab {
       cls: "setting-item-description",
     });
 
-    // Onboarding Banner if not completed
     if (!this.plugin.settings.hasCompletedInitialIndexing) {
       const banner = containerEl.createDiv({ cls: "cypher-notice-banner" });
-      banner.createEl("strong", { text: "⚡ First-Time Setup Required: " });
+      banner.createEl("strong", { text: "Setup Required: " });
       banner.createSpan({ text: "Your vault notes haven't been indexed into the vector DB yet." });
       const launchBtn = banner.createEl("button", {
         text: "Launch Setup Wizard",
@@ -46,15 +44,12 @@ export class CypherSettingsTab extends PluginSettingTab {
       };
     }
 
-    // SECTION: API Configuration
-    // SECTION: Embedding API Configuration
     containerEl.createEl("h3", { text: "1. Embedding Model & Vector API" });
     containerEl.createEl("p", {
       text: "Configure the API and model used to convert your notes into vector embeddings.",
       cls: "setting-item-description",
     });
 
-    // Embedding Presets
     new Setting(containerEl)
       .setName("Embedding Provider Preset")
       .setDesc("Quickly fill settings for embedding models (e.g. OpenAI, local Ollama, LM Studio)")
@@ -76,7 +71,6 @@ export class CypherSettingsTab extends PluginSettingTab {
         });
       });
 
-    // Embedding API URL
     new Setting(containerEl)
       .setName("Embedding API Base URL")
       .setDesc("OpenAI-compatible embeddings endpoint (e.g., https://api.openai.com/v1 or http://localhost:11434/v1)")
@@ -90,7 +84,6 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Embedding API Key
     new Setting(containerEl)
       .setName("Embedding API Key")
       .setDesc("API key for embedding model (optional for local Ollama / LM Studio)")
@@ -109,7 +102,6 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Embedding Model Name
     new Setting(containerEl)
       .setName("Embedding Model Name")
       .setDesc("e.g. text-embedding-3-small, nomic-embed-text, bge-m3")
@@ -123,7 +115,6 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Dimensions & Test Embedding Button
     new Setting(containerEl)
       .setName("Vector Dimension")
       .setDesc(`Current dimension: ${this.plugin.settings.dimension}. Test connection to auto-detect.`)
@@ -133,33 +124,50 @@ export class CypherSettingsTab extends PluginSettingTab {
           try {
             const res = await this.plugin.embeddingService.testConnection();
             if (res.success && res.dimension) {
+              const oldDim = this.plugin.settings.dimension;
               this.plugin.settings.dimension = res.dimension;
               await this.plugin.saveSettings();
-              new Notice(`Embedding connected! Model dimensions: ${res.dimension}`);
+
+              if (oldDim !== res.dimension) {
+                await this.plugin.vectorDbService.clear();
+                await this.plugin.vectorDbService.init(res.dimension);
+                this.plugin.settings.hasCompletedInitialIndexing = false;
+                await this.plugin.saveSettings();
+                new Notice(`Detected ${res.dimension} dimensions (was ${oldDim}). Re-indexed required.`);
+              } else {
+                new Notice(`Embedding connected! Model dimensions: ${res.dimension}`);
+              }
               this.display();
             } else {
               new Notice(`Embedding test failed: ${res.error || "Unknown error"}`);
             }
           } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`Error: ${msg}`);
+            const error = err instanceof Error ? err.message : String(err);
+            new Notice(`Error: ${error}`);
           } finally {
             btn.setButtonText("Test Embedding Connection").setDisabled(false);
           }
         });
       });
 
-    // SECTION: Conversation / Chat API Configuration
     containerEl.createEl("h3", { text: "2. Conversation / Chat Model & API" });
     containerEl.createEl("p", {
       text: "Configure the separate API and model used for AI chat and answering questions with the query tool.",
       cls: "setting-item-description",
     });
 
-    // Chat Presets
+    const isChatOpenAi = (this.plugin.settings.chatApiUrl || "").includes("api.openai.com");
+    if (isChatOpenAi && !this.plugin.settings.chatApiKey) {
+      const banner = containerEl.createDiv({ cls: "cypher-notice-banner" });
+      banner.createEl("strong", { text: "Chat API Key Missing: " });
+      banner.createSpan({
+        text: "OpenAI requires an API key. To chat completely free and offline, choose an Ollama preset below.",
+      });
+    }
+
     new Setting(containerEl)
       .setName("Chat Provider Preset")
-      .setDesc("Quickly fill settings for conversation models (e.g. GPT-4o-mini, Claude, local Llama 3.2)")
+      .setDesc("Quickly fill settings for conversation models (e.g. local Ollama Qwen, OpenAI, Claude)")
       .addDropdown((dropdown) => {
         dropdown.addOption("custom", "Custom / Other");
         for (const preset of CHAT_PROVIDER_PRESETS) {
@@ -177,7 +185,6 @@ export class CypherSettingsTab extends PluginSettingTab {
         });
       });
 
-    // Quick helper: Copy from Embedding API
     new Setting(containerEl)
       .setName("Use Same API as Embedding")
       .setDesc("Copy the base URL and API key from your Embedding API configuration")
@@ -189,13 +196,62 @@ export class CypherSettingsTab extends PluginSettingTab {
             this.plugin.settings.embeddingApiKey !== undefined
               ? this.plugin.settings.embeddingApiKey
               : this.plugin.settings.apiKey || "";
+
+          if (this.plugin.settings.chatApiUrl.includes("11434") && this.plugin.settings.chatModel.includes("gpt")) {
+            this.plugin.settings.chatModel = "qwen3.5:2b";
+          }
+
           await this.plugin.saveSettings();
           new Notice("Copied Embedding API credentials to Chat API");
           this.display();
         });
       });
 
-    // Chat API URL
+    new Setting(containerEl)
+      .setName("Detect Models from API")
+      .setDesc("Fetch models currently installed on your local Ollama or LM Studio instance")
+      .addButton((btn) => {
+        btn.setButtonText("Detect Local Models").onClick(async () => {
+          btn.setButtonText("Detecting...").setDisabled(true);
+          try {
+            const rawBase =
+              this.plugin.settings.chatApiUrl ||
+              this.plugin.settings.embeddingApiUrl ||
+              "http://localhost:11434/v1";
+            let clean = rawBase.trim().replace(/\/+$/, "");
+            if (clean.endsWith("/chat/completions")) clean = clean.slice(0, -"/chat/completions".length);
+            if (clean.endsWith("/embeddings")) clean = clean.slice(0, -"/embeddings".length);
+            const modelsUrl = clean.endsWith("/v1") ? `${clean}/models` : `${clean}/v1/models`;
+
+            const headers: Record<string, string> = {};
+            if (this.plugin.settings.chatApiKey) {
+              headers["Authorization"] = `Bearer ${this.plugin.settings.chatApiKey}`;
+            }
+
+            const res = await requestUrl({ url: modelsUrl, method: "GET", headers, throw: false });
+            if (res.status === 200 && res.json && Array.isArray(res.json.data)) {
+              const modelIds: string[] = res.json.data.map((m: { id: string }) => m.id);
+              const candidates = modelIds.filter((id) => !id.includes("embed"));
+              if (candidates.length > 0) {
+                this.plugin.settings.chatModel = candidates[0];
+                await this.plugin.saveSettings();
+                new Notice(`Found ${modelIds.length} models. Selected: ${candidates[0]}`);
+                this.display();
+              } else {
+                new Notice(`Installed models: ${modelIds.join(", ")}`);
+              }
+            } else {
+              new Notice(`Could not fetch models (HTTP ${res.status}). Ensure endpoint is running.`);
+            }
+          } catch (err: unknown) {
+            const error = err instanceof Error ? err.message : String(err);
+            new Notice(`Detection error: ${error}`);
+          } finally {
+            btn.setButtonText("Detect Local Models").setDisabled(false);
+          }
+        });
+      });
+
     new Setting(containerEl)
       .setName("Chat API Base URL")
       .setDesc("OpenAI-compatible chat completions endpoint (e.g., https://api.openai.com/v1 or http://localhost:11434/v1)")
@@ -209,7 +265,6 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Chat API Key
     new Setting(containerEl)
       .setName("Chat API Key")
       .setDesc("API key for chat model (optional for local Ollama / LM Studio)")
@@ -228,13 +283,12 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Chat Model Name
     new Setting(containerEl)
       .setName("Chat Model Name")
-      .setDesc("e.g. gpt-4o-mini, llama3.2, mistral, anthropic/claude-3.5-sonnet")
+      .setDesc("e.g. qwen3.5:2b, llama3.2, gpt-4o-mini, anthropic/claude-3.5-sonnet")
       .addText((text) => {
         text
-          .setPlaceholder("gpt-4o-mini")
+          .setPlaceholder("qwen3.5:2b")
           .setValue(this.plugin.settings.chatModel)
           .onChange(async (val) => {
             this.plugin.settings.chatModel = val.trim();
@@ -252,15 +306,14 @@ export class CypherSettingsTab extends PluginSettingTab {
               new Notice(`Chat API test failed: ${res.error || "Unknown error"}`);
             }
           } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`Chat API Error: ${msg}`);
+            const error = err instanceof Error ? err.message : String(err);
+            new Notice(`Chat API Error: ${error}`);
           } finally {
             btn.setButtonText("Test Chat API").setDisabled(false);
           }
         });
       });
 
-    // Chat Top K Query Tool Parameter
     new Setting(containerEl)
       .setName("Default Top-K Query Tool Results (k)")
       .setDesc("Number of most relevant note excerpts retrieved when the model queries your vault")
@@ -275,7 +328,6 @@ export class CypherSettingsTab extends PluginSettingTab {
           });
       });
 
-    // Chat System Prompt
     new Setting(containerEl)
       .setName("System Prompt")
       .setDesc("Instructions strictly restricting model to knowledge from your notes only.")
@@ -290,21 +342,19 @@ export class CypherSettingsTab extends PluginSettingTab {
         text.inputEl.cols = 50;
       });
 
-    // SECTION: Database Management & Stats
     containerEl.createEl("h3", { text: "Vector Database Status & Actions" });
 
     const stats = this.plugin.vectorDbService.getStats();
     const statsBox = containerEl.createDiv({ cls: "cypher-summary-card" });
     statsBox.createDiv({
-      text: `📊 Indexed Notes: ${stats.uniqueFilesCount} | Vector Chunks: ${stats.documentCount} | Dimensions: ${stats.dimension}`,
+      text: `Indexed Notes: ${stats.uniqueFilesCount} | Vector Chunks: ${stats.documentCount} | Dimensions: ${stats.dimension}`,
       cls: "cypher-summary-text",
     });
     statsBox.createDiv({
-      text: `💾 Storage File: .obsidian/plugins/cypher/orama_db.json`,
+      text: "Storage File: .obsidian/plugins/cypher/orama_db.json",
       cls: "cypher-summary-subtext",
     });
 
-    // Actions
     new Setting(containerEl)
       .setName("Update Index (Incremental)")
       .setDesc("Scans vault and embeds only newly added or modified notes")
@@ -317,8 +367,8 @@ export class CypherSettingsTab extends PluginSettingTab {
             new Notice("Vault index updated successfully!");
             this.display();
           } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`Indexing error: ${msg}`);
+            const error = err instanceof Error ? err.message : String(err);
+            new Notice(`Indexing error: ${error}`);
           } finally {
             btn.setButtonText("Update Index").setDisabled(false);
           }
@@ -337,8 +387,8 @@ export class CypherSettingsTab extends PluginSettingTab {
             new Notice("Entire vault index rebuilt!");
             this.display();
           } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`Rebuild error: ${msg}`);
+            const error = err instanceof Error ? err.message : String(err);
+            new Notice(`Rebuild error: ${error}`);
           } finally {
             btn.setButtonText("Rebuild All").setDisabled(false);
           }
@@ -360,7 +410,6 @@ export class CypherSettingsTab extends PluginSettingTab {
         });
       });
 
-    // SECTION: Advanced Chunking & Vault Settings
     containerEl.createEl("h3", { text: "Chunking & Vault Configuration" });
 
     new Setting(containerEl)

@@ -12,62 +12,56 @@ export interface SendMessageOptions {
 
 export class ChatService {
   private settings: CypherSettings;
-  private embeddingService: EmbeddingService;
-  private vectorDbService: VectorDbService;
+  private embedSvc: EmbeddingService;
+  private vecDb: VectorDbService;
 
   constructor(
     settings: CypherSettings,
-    embeddingService: EmbeddingService,
-    vectorDbService: VectorDbService
+    embedSvc: EmbeddingService,
+    vecDb: VectorDbService
   ) {
     this.settings = settings;
-    this.embeddingService = embeddingService;
-    this.vectorDbService = vectorDbService;
+    this.embedSvc = embedSvc;
+    this.vecDb = vecDb;
   }
 
   public updateSettings(settings: CypherSettings): void {
     this.settings = settings;
   }
 
-  /**
-   * Normalizes the API URL for chat completions endpoint.
-   */
-  public getChatEndpointUrl(overrideUrl?: string): string {
+  public getChatEndpointUrl(urlOverride?: string): string {
     const raw =
-      overrideUrl !== undefined
-        ? overrideUrl
+      urlOverride !== undefined
+        ? urlOverride
         : this.settings.chatApiUrl || this.settings.apiUrl || "https://api.openai.com/v1";
-    let clean = raw.trim();
-    if (clean.endsWith("/")) {
-      clean = clean.slice(0, -1);
+    let url = raw.trim();
+    if (url.endsWith("/")) {
+      url = url.slice(0, -1);
     }
-    if (clean.endsWith("/embeddings")) {
-      clean = clean.slice(0, -"/embeddings".length);
+    if (url.endsWith("/embeddings")) {
+      url = url.slice(0, -"/embeddings".length);
     }
-    if (clean.endsWith("/chat/completions")) {
-      return clean;
+    if (url.endsWith("/chat/completions")) {
+      return url;
     }
-    return `${clean}/chat/completions`;
+    return `${url}/chat/completions`;
   }
 
-  /**
-   * Tests chat API connection.
-   */
   public async testChatConnection(
-    overrideUrl?: string,
-    overrideKey?: string,
-    overrideModel?: string
+    urlOverride?: string,
+    keyOverride?: string,
+    modelOverride?: string
   ): Promise<{ success: boolean; error?: string }> {
-    const endpoint = this.getChatEndpointUrl(overrideUrl);
+    const endpoint = this.getChatEndpointUrl(urlOverride);
     const key =
-      overrideKey !== undefined
-        ? overrideKey
+      keyOverride !== undefined
+        ? keyOverride
         : this.settings.chatApiKey !== undefined
         ? this.settings.chatApiKey
         : this.settings.apiKey || "";
     const model =
-      overrideModel !== undefined
-        ? overrideModel
+      modelOverride !== undefined
+        ? modelOverride
         : this.settings.chatModel || "gpt-4o-mini";
 
     if (!endpoint) {
@@ -85,7 +79,7 @@ export class ChatService {
     }
 
     try {
-      const response = await requestUrl({
+      const res = await requestUrl({
         url: endpoint,
         method: "POST",
         headers,
@@ -97,29 +91,25 @@ export class ChatService {
         throw: false,
       });
 
-      if (response.status === 200) {
+      if (res.status === 200) {
         return { success: true };
       }
 
-      let errorDetail = response.text;
+      let detail = res.text;
       try {
-        if (response.json && response.json.error) {
-          errorDetail = response.json.error.message || JSON.stringify(response.json.error);
+        if (res.json && res.json.error) {
+          detail = res.json.error.message || JSON.stringify(res.json.error);
         }
       } catch {
-        // ignore
       }
-      return { success: false, error: `HTTP ${response.status}: ${errorDetail}` };
+      return { success: false, error: `HTTP ${res.status}: ${detail}` };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, error: msg };
+      const error = err instanceof Error ? err.message : String(err);
+      return { success: false, error };
     }
   }
 
-  /**
-   * Defines the query tool schema for OpenAI-compatible function calling.
-   */
-  private getToolsDefinition(k: number) {
+  private getTools(k: number) {
     return [
       {
         type: "function",
@@ -144,67 +134,55 @@ export class ChatService {
     ];
   }
 
-  /**
-   * Executes the query tool against the local embedded vector database.
-   */
   public async executeQueryVaultTool(
     query: string,
     k: number,
-    similarityThreshold: number
+    threshold: number
   ): Promise<SearchResult[]> {
     console.log(`[Cypher Chat] Executing query_vault tool for query: "${query}" (top-k=${k})`);
-    const queryEmbedding = await this.embeddingService.getQueryEmbedding(query);
-    const results = await this.vectorDbService.search(queryEmbedding, k, similarityThreshold);
-    return results;
+    const vec = await this.embedSvc.getQueryEmbedding(query);
+    return this.vecDb.search(vec, k, threshold);
   }
 
-  /**
-   * Formats search results into a clean string for the LLM tool response.
-   */
-  private formatSearchResultsForModel(query: string, k: number, results: SearchResult[]): string {
+  private formatResults(query: string, k: number, results: SearchResult[]): string {
     if (results.length === 0) {
       return `No notes found in the vault matching query "${query}" above the similarity threshold.`;
     }
 
-    const chunks = results.map((r, i) => {
-      const scorePct = Math.round(r.score * 100);
+    const items = results.map((r, i) => {
+      const pct = Math.round(r.score * 100);
       const headingPart = r.heading ? ` > Heading: "${r.heading}"` : "";
-      return `[Result ${i + 1} | Note: "${r.title}"${headingPart} | File: "${r.path}" | Similarity: ${scorePct}%]\n${r.text}`;
+      return `[Result ${i + 1} | Note: "${r.title}"${headingPart} | File: "${r.path}" | Similarity: ${pct}%]\n${r.text}`;
     });
 
     return (
       `Retrieved ${results.length} relevant note chunks from the user's vault for query "${query}":\n\n` +
-      chunks.join("\n\n---\n\n")
+      items.join("\n\n---\n\n")
     );
   }
 
-  /**
-   * Sends the conversation to the chat completion API, handles tool calling loops,
-   * and returns the final assistant message along with any tool results.
-   */
   public async sendMessage(
     history: ChatMessage[],
-    options: SendMessageOptions = {}
+    opts: SendMessageOptions = {}
   ): Promise<ChatMessage> {
-    const k = options.topK ?? this.settings.chatTopK ?? 5;
-    const threshold = options.similarityThreshold ?? this.settings.chatSimilarityThreshold ?? 0.25;
+    const k = opts.topK ?? this.settings.chatTopK ?? 5;
+    const threshold = opts.similarityThreshold ?? this.settings.chatSimilarityThreshold ?? 0.25;
 
     const endpoint = this.getChatEndpointUrl();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
 
-    const chatKey =
+    const key =
       this.settings.chatApiKey !== undefined
         ? this.settings.chatApiKey
         : this.settings.apiKey || "";
 
-    if (chatKey && chatKey.trim().length > 0) {
-      headers["Authorization"] = `Bearer ${chatKey.trim()}`;
+    if (key && key.trim().length > 0) {
+      headers["Authorization"] = `Bearer ${key.trim()}`;
     }
 
-    // Build the messages payload starting with system prompt
-    const apiMessages: Array<{
+    const messages: Array<{
       role: string;
       content: string | null;
       tool_calls?: ToolCall[];
@@ -220,8 +198,8 @@ export class ChatService {
     ];
 
     for (const msg of history) {
-      if (msg.role === "system") continue; // system prompt already added above
-      apiMessages.push({
+      if (msg.role === "system") continue;
+      messages.push({
         role: msg.role,
         content: msg.content,
         tool_calls: msg.tool_calls,
@@ -230,22 +208,22 @@ export class ChatService {
       });
     }
 
-    let loopCount = 0;
-    const maxToolTurns = 3;
-    let accumulatedToolResult: ChatToolResult | undefined = undefined;
+    let turn = 0;
+    const maxTurns = 3;
+    let toolResult: ChatToolResult | undefined = undefined;
 
-    while (loopCount < maxToolTurns) {
-      loopCount++;
+    while (turn < maxTurns) {
+      turn++;
 
       const payload = {
         model: this.settings.chatModel.trim(),
-        messages: apiMessages,
-        tools: this.getToolsDefinition(k),
+        messages,
+        tools: this.getTools(k),
         tool_choice: "auto",
         temperature: 0.7,
       };
 
-      const response = await requestUrl({
+      const res = await requestUrl({
         url: endpoint,
         method: "POST",
         headers,
@@ -253,77 +231,70 @@ export class ChatService {
         throw: false,
       });
 
-      if (response.status !== 200) {
-        let errorDetail = response.text;
+      if (res.status !== 200) {
+        let detail = res.text;
         try {
-          if (response.json && response.json.error) {
-            errorDetail = response.json.error.message || JSON.stringify(response.json.error);
+          if (res.json && res.json.error) {
+            detail = res.json.error.message || JSON.stringify(res.json.error);
           }
         } catch {
-          // ignore
         }
-        throw new Error(`Chat API error (HTTP ${response.status}): ${errorDetail}`);
+        throw new Error(`Chat API error (HTTP ${res.status}): ${detail}`);
       }
 
-      const resData = response.json;
-      if (!resData || !resData.choices || resData.choices.length === 0) {
+      const resJson = res.json;
+      if (!resJson || !resJson.choices || resJson.choices.length === 0) {
         throw new Error("Invalid response from chat API: no choices returned");
       }
 
-      const choice = resData.choices[0];
-      const message = choice.message;
+      const choice = resJson.choices[0];
+      const msg = choice.message;
 
-      // Check if model called a tool
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        // Model requested one or more tool calls
-        apiMessages.push({
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        messages.push({
           role: "assistant",
-          content: message.content || "",
-          tool_calls: message.tool_calls,
+          content: msg.content || "",
+          tool_calls: msg.tool_calls,
         });
 
-        for (const toolCall of message.tool_calls as ToolCall[]) {
-          if (toolCall.function && toolCall.function.name === "query_vault") {
-            let parsedArgs: { query?: string } = {};
+        for (const tc of msg.tool_calls as ToolCall[]) {
+          if (tc.function && tc.function.name === "query_vault") {
+            let args: { query?: string } = {};
             try {
-              parsedArgs = JSON.parse(toolCall.function.arguments);
-            } catch (err) {
-              parsedArgs = { query: toolCall.function.arguments };
+              args = JSON.parse(tc.function.arguments);
+            } catch {
+              args = { query: tc.function.arguments };
             }
 
-            const query = parsedArgs.query || "";
-            const searchResults = await this.executeQueryVaultTool(query, k, threshold);
-            accumulatedToolResult = { query, k, results: searchResults };
+            const query = args.query || "";
+            const results = await this.executeQueryVaultTool(query, k, threshold);
+            toolResult = { query, k, results };
 
-            if (options.onToolCall) {
-              options.onToolCall(toolCall, searchResults, query, k);
+            if (opts.onToolCall) {
+              opts.onToolCall(tc, results, query, k);
             }
 
-            const toolOutput = this.formatSearchResultsForModel(query, k, searchResults);
+            const out = this.formatResults(query, k, results);
 
-            apiMessages.push({
+            messages.push({
               role: "tool",
-              tool_call_id: toolCall.id,
-              name: toolCall.function.name,
-              content: toolOutput,
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: out,
             });
           }
         }
 
-        // Loop back to send tool result to LLM
         continue;
       }
 
-      // Final assistant response with no more tool calls
-      const assistantMessage: ChatMessage = {
+      return {
         id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         role: "assistant",
-        content: message.content || "",
+        content: msg.content || "",
         timestamp: Date.now(),
-        toolResult: accumulatedToolResult,
+        toolResult,
       };
-
-      return assistantMessage;
     }
 
     throw new Error("Exceeded maximum tool execution turns");

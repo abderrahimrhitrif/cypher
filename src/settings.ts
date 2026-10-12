@@ -1,13 +1,10 @@
 import { CypherSettings } from "./types";
 
 export const DEFAULT_SETTINGS: CypherSettings = {
-  // Embedding API (Dedicated)
   embeddingApiUrl: "https://api.openai.com/v1",
   embeddingApiKey: "",
   embeddingModel: "text-embedding-3-small",
   dimension: 1536,
-
-  // Chat / Conversation API (Dedicated)
   chatApiUrl: "https://api.openai.com/v1",
   chatApiKey: "",
   chatModel: "gpt-4o-mini",
@@ -16,21 +13,17 @@ export const DEFAULT_SETTINGS: CypherSettings = {
   chatSystemPrompt:
     "You are Cypher, an intelligent AI assistant strictly grounded in the user's Obsidian vault.\n\n" +
     "CRITICAL RULES:\n" +
-    "1. ONLY USE KNOWLEDGE FROM THE NOTES: You can ONLY answer questions using the knowledge and facts contained within the user's notes retrieved via the `query_vault` tool. Do NOT use any external, pre-trained, or outside world knowledge.\n" +
-    "2. ALWAYS QUERY FIRST: Always call the `query_vault` tool to retrieve relevant notes before attempting to formulate any answer.\n" +
-    "3. NO EXTERNAL INFORMATION OR ASSUMPTIONS: If the retrieved notes do not contain the answer, or if no relevant notes are found, you MUST state: \"I could not find this information in your notes.\" Never speculate, fabricate, or answer from general knowledge.\n" +
-    "4. CITE SOURCES: Explicitly cite the note titles (e.g. `[[Note Title]]`) that provide the information in your answer.",
-
-  // Chunking
+    "1. GROUNDED IN VAULT: You can ONLY answer questions using information retrieved from the user's notes via your tools (`query_vault` and `list_notes`). Do NOT use external, pre-trained, or outside world knowledge.\n" +
+    "2. TOOL USAGE:\n" +
+    "   - Call `list_notes` when the user asks what notes exist, lists of notes, vault outline/structure, or finding notes by tag/folder.\n" +
+    "   - Call `query_vault` when answering questions about the specific contents, concepts, or facts inside notes.\n" +
+    "3. NO EXTERNAL INFORMATION: If the retrieved notes do not contain the answer, you MUST state: \"I could not find this information in your notes.\" Never speculate or make up information.\n" +
+    "4. CITE SOURCES: Always cite the note titles (e.g. `[[Note Title]]`) that provide information in your answer.",
   chunkSize: 800,
   chunkOverlap: 150,
   batchSize: 20,
-
-  // Vault indexing options
   excludedFolders: [".obsidian", ".trash"],
   autoIndexOnSave: true,
-
-  // State
   hasCompletedInitialIndexing: false,
   lastIndexedTime: 0,
 };
@@ -89,6 +82,27 @@ export const EMBEDDING_PROVIDER_PRESETS: EmbeddingProviderPreset[] = [
 
 export const CHAT_PROVIDER_PRESETS: ChatProviderPreset[] = [
   {
+    name: "Ollama (Local Qwen 3.5 2B)",
+    apiUrl: "http://localhost:11434/v1",
+    model: "qwen3.5:2b",
+    apiKeyPlaceholder: "ollama (or leave blank)",
+    description: "Fast local chat model with function calling support",
+  },
+  {
+    name: "Ollama (Local Qwen 3.5 4B)",
+    apiUrl: "http://localhost:11434/v1",
+    model: "qwen3.5:4b",
+    apiKeyPlaceholder: "ollama (or leave blank)",
+    description: "Capable local chat model with function calling support",
+  },
+  {
+    name: "Ollama (Local Llama 3.2)",
+    apiUrl: "http://localhost:11434/v1",
+    model: "llama3.2",
+    apiKeyPlaceholder: "ollama (or leave blank)",
+    description: "Fully private local LLM running on your computer",
+  },
+  {
     name: "OpenAI (Cloud)",
     apiUrl: "https://api.openai.com/v1",
     model: "gpt-4o-mini",
@@ -103,13 +117,6 @@ export const CHAT_PROVIDER_PRESETS: ChatProviderPreset[] = [
     description: "Top-tier reasoning via OpenRouter API",
   },
   {
-    name: "Ollama (Local Llama 3.2)",
-    apiUrl: "http://localhost:11434/v1",
-    model: "llama3.2",
-    apiKeyPlaceholder: "ollama (or leave blank)",
-    description: "Fully private local LLM running on your computer",
-  },
-  {
     name: "LM Studio (Local Server)",
     apiUrl: "http://localhost:1234/v1",
     model: "qwen2.5-7b-instruct",
@@ -118,5 +125,4 @@ export const CHAT_PROVIDER_PRESETS: ChatProviderPreset[] = [
   },
 ];
 
-// Presets compatibility alias
 export const PROVIDER_PRESETS = EMBEDDING_PROVIDER_PRESETS;

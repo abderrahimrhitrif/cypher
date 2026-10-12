@@ -1,45 +1,36 @@
 import { ChunkMetadata } from "../types";
 
 export class ChunkingService {
-  /**
-   * Fast 32-bit FNV-1a hash implementation for checking if note contents have changed.
-   */
   public static hashContent(content: string): string {
-    let hash = 2166136261;
+    let h = 2166136261;
     for (let i = 0; i < content.length; i++) {
-      hash ^= content.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
+      h ^= content.charCodeAt(i);
+      h = Math.imul(h, 16777619);
     }
-    return (hash >>> 0).toString(16);
+    return (h >>> 0).toString(16);
   }
 
-  /**
-   * Extracts frontmatter metadata and cleans body.
-   */
-  private static parseFrontmatter(markdown: string): { body: string; frontmatter: string } {
-    const trimmed = markdown.trim();
+  private static parseFrontmatter(md: string): { body: string; frontmatter: string } {
+    const trimmed = md.trim();
     if (!trimmed.startsWith("---")) {
-      return { body: markdown, frontmatter: "" };
+      return { body: md, frontmatter: "" };
     }
 
-    const endIdx = trimmed.indexOf("---", 3);
-    if (endIdx === -1) {
-      return { body: markdown, frontmatter: "" };
+    const end = trimmed.indexOf("---", 3);
+    if (end === -1) {
+      return { body: md, frontmatter: "" };
     }
 
-    const frontmatter = trimmed.slice(3, endIdx).trim();
-    const body = trimmed.slice(endIdx + 3).trim();
+    const frontmatter = trimmed.slice(3, end).trim();
+    const body = trimmed.slice(end + 3).trim();
     return { body, frontmatter };
   }
 
-  /**
-   * Chunks a markdown note into semantically meaningful pieces.
-   */
   public static chunkMarkdown(
     path: string,
     content: string,
-    chunkSize: number,
-    chunkOverlap: number,
+    size: number,
+    overlap: number,
     mtime: number
   ): ChunkMetadata[] {
     const fileHash = this.hashContent(content);
@@ -51,94 +42,82 @@ export class ChunkingService {
       return [];
     }
 
-    // Split markdown by headings or section blocks
     const lines = body.split("\n");
     const sections: { heading: string; lines: string[] }[] = [];
 
-    let currentHeading = "";
-    let currentLines: string[] = [];
+    let curHeading = "";
+    let curLines: string[] = [];
 
     for (const line of lines) {
-      const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
-      if (headingMatch) {
-        if (currentLines.length > 0) {
-          sections.push({ heading: currentHeading, lines: currentLines });
-          currentLines = [];
+      const match = line.match(/^(#{1,6})\s+(.+)$/);
+      if (match) {
+        if (curLines.length > 0) {
+          sections.push({ heading: curHeading, lines: curLines });
+          curLines = [];
         }
-        currentHeading = headingMatch[2].trim();
+        curHeading = match[2].trim();
       } else {
-        currentLines.push(line);
+        curLines.push(line);
       }
     }
 
-    if (currentLines.length > 0) {
-      sections.push({ heading: currentHeading, lines: currentLines });
+    if (curLines.length > 0) {
+      sections.push({ heading: curHeading, lines: curLines });
     }
 
-    // Now subdivide sections into chunks respecting chunkSize and overlap
     const rawChunks: { heading: string; text: string }[] = [];
 
-    for (const section of sections) {
-      const sectionText = section.lines.join("\n").trim();
-      if (!sectionText) continue;
+    for (const sec of sections) {
+      const secText = sec.lines.join("\n").trim();
+      if (!secText) continue;
 
-      if (sectionText.length <= chunkSize) {
-        rawChunks.push({
-          heading: section.heading,
-          text: sectionText,
-        });
+      if (secText.length <= size) {
+        rawChunks.push({ heading: sec.heading, text: secText });
       } else {
-        // Split section text by paragraphs
-        const paragraphs = sectionText.split(/\n\s*\n/);
-        let currentChunk = "";
+        const paras = secText.split(/\n\s*\n/);
+        let curChunk = "";
 
-        for (const p of paragraphs) {
+        for (const p of paras) {
           const trimmedP = p.trim();
           if (!trimmedP) continue;
 
-          if (currentChunk.length + trimmedP.length + 2 <= chunkSize) {
-            currentChunk = currentChunk ? `${currentChunk}\n\n${trimmedP}` : trimmedP;
+          if (curChunk.length + trimmedP.length + 2 <= size) {
+            curChunk = curChunk ? `${curChunk}\n\n${trimmedP}` : trimmedP;
           } else {
-            if (currentChunk) {
-              rawChunks.push({ heading: section.heading, text: currentChunk });
+            if (curChunk) {
+              rawChunks.push({ heading: sec.heading, text: curChunk });
             }
 
-            // If a single paragraph is longer than chunkSize, split it by sentences or characters
-            if (trimmedP.length > chunkSize) {
+            if (trimmedP.length > size) {
               let start = 0;
               while (start < trimmedP.length) {
-                const end = Math.min(start + chunkSize, trimmedP.length);
-                const chunkSlice = trimmedP.slice(start, end).trim();
-                if (chunkSlice) {
-                  rawChunks.push({ heading: section.heading, text: chunkSlice });
+                const end = Math.min(start + size, trimmedP.length);
+                const slice = trimmedP.slice(start, end).trim();
+                if (slice) {
+                  rawChunks.push({ heading: sec.heading, text: slice });
                 }
-                start += chunkSize - chunkOverlap;
+                start += size - overlap;
               }
-              currentChunk = "";
+              curChunk = "";
             } else {
-              currentChunk = trimmedP;
+              curChunk = trimmedP;
             }
           }
         }
 
-        if (currentChunk) {
-          rawChunks.push({ heading: section.heading, text: currentChunk });
+        if (curChunk) {
+          rawChunks.push({ heading: sec.heading, text: curChunk });
         }
       }
     }
 
-    // In case no chunks were produced (e.g. only headings)
     if (rawChunks.length === 0 && body.trim().length > 0) {
-      rawChunks.push({ heading: "", text: body.trim().slice(0, chunkSize) });
+      rawChunks.push({ heading: "", text: body.trim().slice(0, size) });
     }
 
-    // Format final chunk metadata
-    const totalChunks = rawChunks.length;
+    const total = rawChunks.length;
     return rawChunks.map((chunk, idx) => {
-      // Build a contextual prefix (note title and heading)
-      const contextPrefix = chunk.heading
-        ? `[Note: ${title} | ${chunk.heading}]\n`
-        : `[Note: ${title}]\n`;
+      const prefix = chunk.heading ? `[Note: ${title} | ${chunk.heading}]\n` : `[Note: ${title}]\n`;
 
       return {
         id: `${path}#chunk-${idx}`,
@@ -146,8 +125,8 @@ export class ChunkingService {
         title,
         heading: chunk.heading,
         chunkIndex: idx,
-        totalChunks,
-        text: `${contextPrefix}${chunk.text}`,
+        totalChunks: total,
+        text: `${prefix}${chunk.text}`,
         fileHash,
         mtime,
       };

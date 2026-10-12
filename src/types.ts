@@ -1,42 +1,31 @@
 export interface CypherSettings {
-  // Embedding API Configuration (Dedicated)
   embeddingApiUrl: string;
   embeddingApiKey: string;
   embeddingModel: string;
   dimension: number;
-
-  // Chat / Conversation API Configuration (Dedicated)
   chatApiUrl: string;
   chatApiKey: string;
   chatModel: string;
-  chatTopK: number; // Top-k parameter for query tool
+  chatTopK: number;
   chatSimilarityThreshold: number;
   chatSystemPrompt: string;
-
-  // Chunking Configuration
-  chunkSize: number; // in characters
-  chunkOverlap: number; // in characters
-  batchSize: number; // number of chunks per embedding request
-
-  // Vault indexing options
+  chunkSize: number;
+  chunkOverlap: number;
+  batchSize: number;
   excludedFolders: string[];
   autoIndexOnSave: boolean;
-
-  // State
   hasCompletedInitialIndexing: boolean;
   lastIndexedTime: number;
-
-  // Legacy fallback fields for backward compatibility
   apiUrl?: string;
   apiKey?: string;
   model?: string;
 }
 
 export interface ChunkMetadata {
-  id: string; // e.g., "notes/idea.md#chunk-0"
-  path: string; // relative path within vault
-  title: string; // file name without extension
-  heading: string; // current heading context
+  id: string;
+  path: string;
+  title: string;
+  heading: string;
   chunkIndex: number;
   totalChunks: number;
   text: string;
@@ -68,7 +57,7 @@ export interface IndexingProgress {
 
 export interface SearchResult {
   id: string;
-  score: number; // cosine similarity (0 to 1)
+  score: number;
   path: string;
   title: string;
   heading: string;
@@ -100,10 +89,19 @@ export interface ToolCall {
   function: ToolCallFunction;
 }
 
+export interface NoteMeta {
+  title: string;
+  path: string;
+  dir: string;
+  tags: string[];
+}
+
 export interface ChatToolResult {
-  query: string;
-  k: number;
-  results: SearchResult[];
+  toolName?: string;
+  query?: string;
+  k?: number;
+  results?: SearchResult[];
+  notes?: NoteMeta[];
 }
 
 export interface ChatMessage {

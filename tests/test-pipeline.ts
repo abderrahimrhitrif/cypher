@@ -32,7 +32,6 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
     throw new Error("Expected multiple chunks based on headings and text length");
   }
 
-  // Test hash stability
   const hash1 = ChunkingService.hashContent(sampleNote);
   const hash2 = ChunkingService.hashContent(sampleNote);
   const hash3 = ChunkingService.hashContent(sampleNote + "\n modified!");
@@ -57,9 +56,9 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   });
 
   const sampleVectors: number[][] = [
-    [0.9, 0.8, 0.1, 0.0, 0.0, 0.1, 0.0, 0.0], // Architecture
-    [0.1, 0.0, 0.9, 0.8, 0.2, 0.0, 0.0, 0.1], // Cooking recipes
-    [0.85, 0.78, 0.05, 0.0, 0.1, 0.05, 0.0, 0.0], // Near architecture
+    [0.9, 0.8, 0.1, 0.0, 0.0, 0.1, 0.0, 0.0],
+    [0.1, 0.0, 0.9, 0.8, 0.2, 0.0, 0.0, 0.1],
+    [0.85, 0.78, 0.05, 0.0, 0.1, 0.05, 0.0, 0.0],
   ];
 
   await insertMultiple(db, [
@@ -95,7 +94,6 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
     },
   ]);
 
-  // Query vector similar to architecture
   const query = [0.88, 0.82, 0.08, 0.0, 0.05, 0.08, 0.0, 0.0];
   const searchResults = await search(db, {
     mode: "vector",
@@ -142,7 +140,6 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
     throw new Error("Restored DB hit count mismatch");
   }
   console.log("\n=== 4. Testing Top-K Query Tool (k parameter modification) ===");
-  // Test with k = 1
   const searchK1 = await search(db, {
     mode: "vector",
     vector: { value: query, property: "embedding" },
@@ -154,7 +151,6 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   }
   console.log(`✓ top-k=1 returned exactly 1 hit: ${(searchK1.hits[0].document as any).title}`);
 
-  // Test with k = 2
   const searchK2 = await search(db, {
     mode: "vector",
     vector: { value: query, property: "embedding" },
@@ -167,7 +163,6 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   console.log(`✓ top-k=2 returned exactly 2 hits as requested by user parameter.`);
 
   console.log("\n=== 5. Testing Instant Document Addition and Deletion ===");
-  // Remove doc-2 (notes/recipes.md)
   const { remove } = require("@orama/orama");
   await remove(db, "doc-2");
 
@@ -215,6 +210,3 @@ runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
-
-
-

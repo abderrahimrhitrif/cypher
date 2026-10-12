@@ -17,21 +17,19 @@ export default class CypherPlugin extends Plugin {
   public indexerService!: IndexerService;
   public chatService!: ChatService;
 
-  private statusBarItemEl: HTMLElement | null = null;
-  private modifiedDebounceMap: Map<string, NodeJS.Timeout> = new Map();
+  private statusEl: HTMLElement | null = null;
+  private debounces: Map<string, NodeJS.Timeout> = new Map();
 
   public async onload(): Promise<void> {
     console.log("[Cypher] Loading Cypher AI Vector Plugin...");
 
-    // 1. Load Settings
     await this.loadSettings();
 
-    // 2. Initialize Services
-    const pluginDir = `${this.app.vault.configDir}/plugins/cypher`;
+    const dir = `${this.app.vault.configDir}/plugins/cypher`;
     this.embeddingService = new EmbeddingService(this.settings);
     this.vectorDbService = new VectorDbService(
       this.app.vault.adapter,
-      pluginDir,
+      dir,
       this.settings.dimension
     );
     this.indexerService = new IndexerService(
@@ -46,27 +44,22 @@ export default class CypherPlugin extends Plugin {
       this.vectorDbService
     );
 
-    // Initialize the vector DB
     try {
       await this.vectorDbService.init(this.settings.dimension);
     } catch (err) {
       console.error("[Cypher] Error initializing vector database:", err);
     }
 
-    // 3. Register Views
     this.registerView(
       VIEW_TYPE_CYPHER_CHAT,
       (leaf) => new CypherChatView(leaf, this)
     );
 
-    // 4. Register UI Components
     this.addSettingTab(new CypherSettingsTab(this.app, this));
 
-    // Status bar item
-    this.statusBarItemEl = this.addStatusBarItem();
+    this.statusEl = this.addStatusBarItem();
     this.updateStatusBar();
 
-    // Ribbon icons
     this.addRibbonIcon("bot", "Cypher: AI Chat", () => {
       this.activateChatView();
     });
@@ -75,7 +68,6 @@ export default class CypherPlugin extends Plugin {
       this.openSearchModal();
     });
 
-    // 5. Register Commands
     this.addCommand({
       id: "open-chat",
       name: "Open AI Chat (with Vault Query Tool)",
@@ -102,8 +94,8 @@ export default class CypherPlugin extends Plugin {
           this.updateStatusBar();
           new Notice("Cypher: Vault index updated successfully!");
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          new Notice(`Cypher Indexing Error: ${msg}`);
+          const error = err instanceof Error ? err.message : String(err);
+          new Notice(`Cypher Indexing Error: ${error}`);
         }
       },
     });
@@ -118,8 +110,8 @@ export default class CypherPlugin extends Plugin {
           this.updateStatusBar();
           new Notice("Cypher: Vault index rebuilt!");
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          new Notice(`Cypher Rebuild Error: ${msg}`);
+          const error = err instanceof Error ? err.message : String(err);
+          new Notice(`Cypher Rebuild Error: ${error}`);
         }
       },
     });
@@ -132,8 +124,6 @@ export default class CypherPlugin extends Plugin {
       },
     });
 
-    // 6. Register Vault Event Listeners
-    // Instantly add newly created documents to the vector DB
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile && file.extension === "md") {
@@ -141,39 +131,36 @@ export default class CypherPlugin extends Plugin {
             const indexed = await this.indexerService.handleFileCreated(file);
             this.updateStatusBar();
             if (indexed) {
-              new Notice(`⚡ Cypher: Added "${file.basename}" to vector DB`);
+              new Notice(`Cypher: Added "${file.basename}" to vector DB`);
             }
           }, 100);
         }
       })
     );
 
-    // Instantly remove deleted documents from the vector DB
     this.registerEvent(
       this.app.vault.on("delete", async (file) => {
         const path = file.path;
-        const timer = this.modifiedDebounceMap.get(path);
+        const timer = this.debounces.get(path);
         if (timer) {
           clearTimeout(timer);
-          this.modifiedDebounceMap.delete(path);
+          this.debounces.delete(path);
         }
 
         await this.indexerService.handleFileDeleted(path);
         this.updateStatusBar();
-        new Notice(`⚡ Cypher: Removed "${file.name}" from vector DB`);
+        new Notice(`Cypher: Removed "${file.name}" from vector DB`);
       })
     );
 
-    // Automatically update modified documents
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile && file.extension === "md" && this.settings.autoIndexOnSave) {
-          this.queueFileIndexing(file);
+          this.queueIndex(file);
         }
       })
     );
 
-    // Update renamed documents
     this.registerEvent(
       this.app.vault.on("rename", async (file, oldPath) => {
         if (file instanceof TFile && file.extension === "md") {
@@ -184,11 +171,9 @@ export default class CypherPlugin extends Plugin {
       })
     );
 
-    // 7. First-Time Setup Launch
     this.app.workspace.onLayoutReady(() => {
       this.updateStatusBar();
       if (!this.settings.hasCompletedInitialIndexing) {
-        // Automatically open the guided onboarding modal on first run
         setTimeout(() => {
           this.openOnboardingModal();
         }, 600);
@@ -201,10 +186,10 @@ export default class CypherPlugin extends Plugin {
   public async onunload(): Promise<void> {
     console.log("[Cypher] Unloading Cypher plugin...");
     this.indexerService.cancel();
-    for (const timer of this.modifiedDebounceMap.values()) {
+    for (const timer of this.debounces.values()) {
       clearTimeout(timer);
     }
-    this.modifiedDebounceMap.clear();
+    this.debounces.clear();
 
     try {
       await this.vectorDbService.save();
@@ -214,8 +199,8 @@ export default class CypherPlugin extends Plugin {
   }
 
   public async loadSettings(): Promise<void> {
-    const loadedData = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
+    const data = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
   }
 
   public async saveSettings(): Promise<void> {
@@ -275,29 +260,29 @@ export default class CypherPlugin extends Plugin {
   }
 
   public updateStatusBar(): void {
-    if (!this.statusBarItemEl) return;
+    if (!this.statusEl) return;
     const stats = this.vectorDbService?.getStats();
     if (!stats || stats.documentCount === 0) {
-      this.statusBarItemEl.setText("⚡ Cypher: Not indexed");
+      this.statusEl.setText("Cypher: Not indexed");
     } else {
-      this.statusBarItemEl.setText(`⚡ Cypher: ${stats.documentCount} chunks`);
+      this.statusEl.setText(`Cypher: ${stats.documentCount} chunks`);
     }
   }
 
-  private queueFileIndexing(file: TFile): void {
-    const existing = this.modifiedDebounceMap.get(file.path);
+  private queueIndex(file: TFile): void {
+    const existing = this.debounces.get(file.path);
     if (existing) {
       clearTimeout(existing);
     }
 
     const timer = setTimeout(async () => {
-      this.modifiedDebounceMap.delete(file.path);
+      this.debounces.delete(file.path);
       const indexed = await this.indexerService.indexSingleFile(file);
       if (indexed) {
         this.updateStatusBar();
       }
     }, 1000);
 
-    this.modifiedDebounceMap.set(file.path, timer);
+    this.debounces.set(file.path, timer);
   }
 }
