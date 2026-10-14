@@ -1,12 +1,12 @@
 # Cypher
 
-Local-first Retrieval-Augmented Generation (RAG) and semantic vector search plugin for Obsidian.
+Local-first Retrieval-Augmented Generation (RAG) and semantic vector search plugin for Obsidian with persistent conversation storage.
 
 ## Overview
 
-Cypher is an Obsidian plugin that builds a local vector database of Markdown notes and integrates with OpenAI-compatible APIs to provide semantic search and context-grounded chat.
+Cypher is an Obsidian plugin that builds a local vector database of Markdown notes, enables semantic vector search, and provides context-grounded chat via OpenAI-compatible APIs.
 
-Rather than sending an entire vault to an LLM or relying on external cloud vector databases, Cypher processes Markdown files locally: it parses document structure, splits text into contextual chunks, computes embeddings via configurable endpoints, stores vectors in an embedded database on disk, and exposes retrieval tools to the chat model via standard function calling.
+The plugin processes Markdown files locally: it parses document structure, splits text into contextual chunks, computes embeddings via configurable endpoints, stores vectors in an embedded database on disk, and exposes retrieval tools to the chat model via standard function calling. All chat conversations and tool execution records are persisted locally using IndexedDB.
 
 The plugin supports both local inference engines (Ollama, LM Studio) and remote providers (OpenAI, OpenRouter), with independent configuration for embedding and chat models.
 
@@ -14,7 +14,12 @@ The plugin supports both local inference engines (Ollama, LM Studio) and remote 
 
 ## How It Works
 
-Cypher operates through two primary subsystems: the **Ingestion Pipeline** (indexing and syncing notes) and the **Retrieval & Inference Pipeline** (searching and chatting).
+Cypher operates through three primary subsystems:
+1. **Ingestion Pipeline**: Indexes and synchronizes vault notes into a local vector database.
+2. **Retrieval & Inference Pipeline**: Queries semantic chunks and provides grounded answers via LLM tool calling.
+3. **Conversation Storage Pipeline**: Persists chat sessions and tool execution records atomically using IndexedDB.
+
+---
 
 ### 1. Ingestion Pipeline
 
@@ -97,6 +102,9 @@ Cypher operates through two primary subsystems: the **Ingestion Pipeline** (inde
 [User Message]
        │
        ▼
+[Active Conversation Check] ── Auto-generate title on first turn; persist user message to IndexedDB
+       │
+       ▼
 [Chat Service] ── Prepares messages, system prompt, and tool definitions
        │
        ▼
@@ -116,7 +124,10 @@ Cypher operates through two primary subsystems: the **Ingestion Pipeline** (inde
              [Append Tool Results]                                         │
                         │                                                  │
                         ▼                                                  │
-             [Follow-up LLM Call] ─────────────────────────────────────────┘
+             [Follow-up LLM Call] ─────────────────────────────────────────┤
+                                                                           │
+                                                                           ▼
+                                                             [Persist Turn to IndexedDB]
 ```
 
 #### Tool Definitions
@@ -152,24 +163,47 @@ The chat service uses a strict grounding system prompt:
 
 ---
 
-### 3. Conversation Storage & History Browsing
+### 3. Conversation Storage Pipeline (IndexedDB)
 
-Cypher persists chat conversations locally using **IndexedDB** (`cypher_db`), avoiding full-file JSON serialization on every turn:
-- **Object Store**: `conversations` store keyed by unique conversation ID (`conv-{timestamp}-{rand}`).
-- **Index**: Numeric index on `updatedAt` for retrieval of conversation lists ordered from newest to oldest.
-- **State Preservation**: Persists complete message histories and structured `toolResult` metadata (queries, matched chunks, similarity scores, tags). When an old conversation is reopened, all past tool cards and assistant citations are fully restored.
-- **Auto-Titling**: New conversations automatically derive their title from the first user prompt (truncated to ~40 characters on word boundaries).
-- **History Drawer**: An in-place drawer enables browsing past conversations, viewing timestamps and message counts, renaming titles, deleting individual chats, and resuming previous interactions.
+All chat conversations are stored locally in the browser/Electron **IndexedDB** database (`cypher_db`), avoiding full-file JSON serialization on every turn.
+
+#### Storage Architecture
+
+- **Database Name**: `cypher_db` (Version 1)
+- **Object Store**: `conversations`
+- **Primary Key**: `id` (e.g. `conv-1718000000000-abc12`)
+- **Index**: Numeric index on `updatedAt` for querying conversations sorted chronologically (newest first) using cursor navigation (`prev` direction).
+- **In-Memory Fallback**: When running in headless environments without DOM IndexedDB APIs (such as CLI automated test runners), `ConversationService` uses an in-memory map store conforming to the same interface.
+
+#### Data Schema
+
+```typescript
+export interface Conversation {
+  id: string;               // Unique conversation identifier
+  title: string;            // User-editable or auto-generated title
+  createdAt: number;        // Epoch timestamp of creation
+  updatedAt: number;        // Epoch timestamp of last message/update
+  messages: ChatMessage[];  // Complete message history including toolResult payloads
+}
+```
+
+#### Key Mechanics
+
+- **Atomic Transactional Writes**: On every user prompt and assistant reply, `ConversationService.save()` issues a `readwrite` transaction executing `store.put(conversation)`. This isolates writes to the modified conversation record.
+- **Full State Restoration**: Conversations store complete `ChatMessage` records including `toolResult` objects (query strings, retrieved note chunks, similarity scores, and tag metadata). Selecting a previous conversation restores all past tool execution cards and citations.
+- **Automatic Titling**: If a conversation starts with the default title `"New Chat"`, the first user message is processed through `generateTitleFromContent()`. Markdown characters (`#`, `*`, `_`, `[]`, `()`) are removed and the text is truncated to ~40 characters on word boundaries.
+- **History Drawer**: Clicking the `History` button in the chat header opens an in-place panel listing past conversations with their titles, timestamps, and message counts. Users can load past chats, rename titles (`✎`), or delete records (`✕`).
+- **Active Chat Controls**: The subheader displays the current conversation title with click-to-rename and a `Delete` button that removes the conversation from IndexedDB and switches to the next available chat.
 
 ---
 
-### 4. Quick Semantic Search Modal
+### 4. Semantic Search Modal
 
-For searching without chatting, Cypher provides a dedicated modal (`Ctrl/Cmd + P` -> `Cypher: Semantic Search Vault`):
-1. User types a query.
-2. The query is embedded and searched against Orama in real-time.
+For vector search without opening a chat session, Cypher provides a dedicated modal (`Ctrl/Cmd + P` -> `Cypher: Semantic Search Vault`):
+1. User enters a search query.
+2. The query is embedded and searched against the local Orama database in real time.
 3. Results display note title, section heading, similarity score, and excerpt.
-4. Selecting a result opens the target note directly in the active editor.
+4. Selecting an item navigates to the note directly in the active editor.
 
 ---
 
@@ -177,16 +211,15 @@ For searching without chatting, Cypher provides a dedicated modal (`Ctrl/Cmd + P
 
 | Component | Implementation | Notes |
 |---|---|---|
-| Vector Database | `@orama/orama` v3.1.18 | Runs in-memory in the Obsidian Electron/browser thread |
-| DB Persistence | `@orama/plugin-data-persistence` | Serializes schema and vector index to JSON |
+| Vector Database | `@orama/orama` v3.1.18 | In-memory vector database running in the Obsidian thread |
+| DB Persistence | `@orama/plugin-data-persistence` | Serializes schema and vector trees to JSON on disk |
 | Conversation Store | IndexedDB (`cypher_db`) | Object store with `updatedAt` index and atomic transactions |
-| Similarity Metric | Cosine similarity | Supported natively by Orama vector property |
-| Change Detection | FNV-1a 32-bit hash | Fast non-cryptographic hash evaluated per note |
+| Similarity Metric | Cosine similarity | Evaluated natively on Orama vector properties |
+| Change Detection | FNV-1a 32-bit hash | Non-cryptographic hash for fast file diffing |
 | API Format | OpenAI-compatible HTTP | Endpoints: `/embeddings` and `/chat/completions` |
 | Chunking Logic | Structure-aware regex parser | Splits by headings, paragraphs, sliding window |
 | Rate Limit Handling | Exponential backoff + jitter | Handles HTTP 429 and 503 |
 | UI Framework | Native Obsidian DOM API | Lightweight DOM construction, MarkdownRenderer |
-
 
 ---
 
@@ -195,15 +228,15 @@ For searching without chatting, Cypher provides a dedicated modal (`Ctrl/Cmd + P
 Settings are accessible via **Obsidian Settings -> Cypher**:
 
 ### Embedding Configuration
-- **API URL**: Endpoint URL (e.g., `http://localhost:11434/v1` or `https://api.openai.com/v1`).
+- **API URL**: Endpoint URL (e.g. `http://localhost:11434/v1` or `https://api.openai.com/v1`).
 - **API Key**: Bearer token (optional for local providers like Ollama).
-- **Model Name**: Embedding model identifier (e.g., `nomic-embed-text`, `text-embedding-3-small`).
-- **Vector Dimension**: Dimension size of the model output (e.g., 768 for nomic-embed-text, 1536 for OpenAI small). Auto-detected via the test connection button.
+- **Model Name**: Embedding model identifier (e.g. `nomic-embed-text`, `text-embedding-3-small`).
+- **Vector Dimension**: Dimension size of the model output (e.g. 768 for nomic-embed-text, 1536 for OpenAI small). Auto-detected via the test connection button.
 
 ### Chat Configuration
 - **API URL**: Endpoint URL for chat completions.
 - **API Key**: Bearer token for chat endpoint.
-- **Model Name**: Chat model identifier (e.g., `qwen3.5:4b`, `llama3.2`, `gpt-4o-mini`).
+- **Model Name**: Chat model identifier (e.g. `qwen3.5:4b`, `llama3.2`, `gpt-4o-mini`).
 - **Top K**: Default number of chunks retrieved by `query_vault` (default: `5`).
 - **Similarity Threshold**: Minimum cosine similarity score required for retrieval hits (default: `0.25`).
 - **System Prompt**: Editable prompt defining grounding constraints and citation instructions.
@@ -236,7 +269,7 @@ Because Cypher uses standard OpenAI-compatible REST endpoints, it works with mul
 cypher/
 ├── src/
 │   ├── main.ts                    # Plugin initialization, commands, and vault event listeners
-│   ├── types.ts                   # Interfaces for settings, chunks, search results, and tool calls
+│   ├── types.ts                   # Interfaces for settings, chunks, search results, and conversations
 │   ├── settings.ts                # Default values and provider presets
 │   ├── services/
 │   │   ├── chunkingService.ts     # Markdown parser, heading splitter, context injector, FNV-1a
@@ -279,7 +312,6 @@ npm test
 7. **Dual-API Separation**: Confirms embedding and chat configurations can use separate URLs and keys.
 8. **Tool Routing**: Verifies `list_notes` tag extraction (frontmatter and inline) and directory filtering.
 9. **Conversation Storage Lifecycle**: Tests IndexedDB store transactions, chronological sorting by `updatedAt`, `toolResult` persistence, prompt auto-titling, renaming, and atomic deletions.
-
 
 ---
 
