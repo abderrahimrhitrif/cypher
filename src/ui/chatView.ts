@@ -1,16 +1,24 @@
 import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type CypherPlugin from "../main";
-import { ChatMessage, ChatToolResult } from "../types";
+import { ChatMessage, ChatToolResult, Conversation } from "../types";
 
 export const VIEW_TYPE_CYPHER_CHAT = "cypher-chat-view";
 
 export class CypherChatView extends ItemView {
   private plugin: CypherPlugin;
-  private messages: ChatMessage[] = [];
+  private currentConversation: Conversation | null = null;
+  private showHistory = false;
   private generating = false;
   private k: number;
 
+  private containerArea: HTMLElement | null = null;
+  private headerEl: HTMLElement | null = null;
+  private subheaderTitleEl: HTMLElement | null = null;
+  private historyBtnEl: HTMLElement | null = null;
+  private contentAreaEl: HTMLElement | null = null;
   private boxEl: HTMLElement | null = null;
+  private historyDrawerEl: HTMLElement | null = null;
+  private inputAreaEl: HTMLElement | null = null;
   private inputEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
   private kInput: HTMLInputElement | null = null;
@@ -38,19 +46,58 @@ export class CypherChatView extends ItemView {
     const container = this.containerEl.children[1] as HTMLElement;
     container.empty();
     container.addClass("cypher-chat-container");
+    this.containerArea = container;
 
-    this.renderHeader(container);
-    this.renderMessagesArea(container);
-    this.renderInputArea(container);
+    await this.loadInitialConversation();
+    this.renderView();
   }
 
   public async onClose(): Promise<void> {
   }
 
-  private renderHeader(container: HTMLElement): void {
-    const header = container.createDiv({ cls: "cypher-chat-header" });
+  private async loadInitialConversation(): Promise<void> {
+    try {
+      const all = await this.plugin.conversationService.getAll();
+      if (all.length > 0) {
+        this.currentConversation = all[0];
+      } else {
+        this.currentConversation = await this.plugin.conversationService.create("New Chat");
+      }
+    } catch (err) {
+      console.error("[Cypher] Error loading initial conversation:", err);
+      this.currentConversation = await this.plugin.conversationService.create("New Chat");
+    }
+  }
 
-    const left = header.createDiv({ cls: "cypher-chat-header-left" });
+  private renderView(): void {
+    if (!this.containerArea) return;
+    this.containerArea.empty();
+
+    this.renderHeader(this.containerArea);
+
+    this.contentAreaEl = this.containerArea.createDiv({ cls: "cypher-chat-content-area" });
+    this.renderContentArea();
+
+    this.renderInputArea(this.containerArea);
+  }
+
+  private renderHeader(container: HTMLElement): void {
+    this.headerEl = container.createDiv({ cls: "cypher-chat-header cypher-chat-header-main" });
+
+    const topRow = this.headerEl.createDiv({ cls: "cypher-chat-header-row" });
+
+    const left = topRow.createDiv({ cls: "cypher-chat-header-left" });
+
+    this.historyBtnEl = left.createEl("button", {
+      cls: "cypher-btn-sm",
+      text: "History",
+      title: "Browse past conversations",
+    });
+    this.historyBtnEl.onclick = async () => {
+      this.showHistory = !this.showHistory;
+      this.renderContentArea();
+    };
+
     const titleBox = left.createDiv({ cls: "cypher-chat-title-box" });
     titleBox.createSpan({ text: "Cypher", cls: "cypher-chat-title" });
     const badge = titleBox.createSpan({ cls: "cypher-chat-model-badge" });
@@ -62,7 +109,16 @@ export class CypherChatView extends ItemView {
       (this.app as unknown as { setting?: { open: () => void; openTabById: (id: string) => void } }).setting?.openTabById?.("cypher");
     };
 
-    const controls = header.createDiv({ cls: "cypher-chat-header-controls" });
+    const controls = topRow.createDiv({ cls: "cypher-chat-header-controls" });
+
+    const newBtn = controls.createEl("button", {
+      cls: "cypher-btn-sm mod-cta",
+      text: "+ New",
+      title: "Start a new conversation",
+    });
+    newBtn.onclick = async () => {
+      await this.startNewConversation();
+    };
 
     const kBox = controls.createDiv({ cls: "cypher-k-control" });
     kBox.createSpan({ text: "Top K:", cls: "cypher-k-label", title: "Number of vault notes retrieved by query tool" });
@@ -87,15 +143,227 @@ export class CypherChatView extends ItemView {
       }
     });
 
-    const clearBtn = controls.createEl("button", {
-      cls: "cypher-chat-btn-clear",
-      text: "Clear",
-      title: "Clear conversation",
+    const subheader = this.headerEl.createDiv({ cls: "cypher-chat-subheader" });
+    this.subheaderTitleEl = subheader.createSpan({
+      text: this.currentConversation?.title || "New Chat",
+      cls: "cypher-current-title",
+      title: "Click to rename conversation",
     });
-    clearBtn.onclick = () => {
-      this.messages = [];
-      this.renderMessages();
+    this.subheaderTitleEl.onclick = () => {
+      this.promptRenameConversation();
     };
+
+    const subActions = subheader.createDiv({ cls: "cypher-subheader-actions" });
+
+    const renameBtn = subActions.createEl("button", {
+      cls: "cypher-btn-sm",
+      text: "Rename",
+      title: "Rename this conversation",
+    });
+    renameBtn.onclick = () => {
+      this.promptRenameConversation();
+    };
+
+    const deleteBtn = subActions.createEl("button", {
+      cls: "cypher-btn-sm cypher-btn-danger",
+      text: "Delete",
+      title: "Delete this conversation",
+    });
+    deleteBtn.onclick = async () => {
+      await this.deleteCurrentConversation();
+    };
+
+    this.updateHistoryButtonLabel();
+  }
+
+  private async updateHistoryButtonLabel(): Promise<void> {
+    if (!this.historyBtnEl) return;
+    const all = await this.plugin.conversationService.getAll();
+    this.historyBtnEl.setText(`History (${all.length})`);
+  }
+
+  private updateSubheaderTitle(): void {
+    if (this.subheaderTitleEl) {
+      this.subheaderTitleEl.setText(this.currentConversation?.title || "New Chat");
+    }
+  }
+
+  private renderContentArea(): void {
+    if (!this.contentAreaEl) return;
+    this.contentAreaEl.empty();
+
+    if (this.showHistory) {
+      if (this.inputAreaEl) this.inputAreaEl.style.display = "none";
+      this.renderHistoryDrawer(this.contentAreaEl);
+    } else {
+      if (this.inputAreaEl) this.inputAreaEl.style.display = "flex";
+      this.renderMessagesArea(this.contentAreaEl);
+    }
+    this.updateHistoryButtonLabel();
+  }
+
+  private async renderHistoryDrawer(container: HTMLElement): Promise<void> {
+    this.historyDrawerEl = container.createDiv({ cls: "cypher-history-drawer" });
+
+    const header = this.historyDrawerEl.createDiv({ cls: "cypher-history-header" });
+    const all = await this.plugin.conversationService.getAll();
+    header.createSpan({ text: `Past Conversations (${all.length})`, cls: "cypher-history-header-title" });
+
+    const headerActions = header.createDiv({ cls: "cypher-history-actions" });
+    const newChatBtn = headerActions.createEl("button", {
+      cls: "cypher-btn-sm mod-cta",
+      text: "+ New",
+      title: "Start a new conversation",
+    });
+    newChatBtn.onclick = async () => {
+      await this.startNewConversation();
+    };
+
+    const closeBtn = headerActions.createEl("button", {
+      cls: "cypher-btn-sm",
+      text: "Close",
+      title: "Return to active chat",
+    });
+    closeBtn.onclick = () => {
+      this.showHistory = false;
+      this.renderContentArea();
+    };
+
+    const listEl = this.historyDrawerEl.createDiv({ cls: "cypher-history-list" });
+
+    if (all.length === 0) {
+      const empty = listEl.createDiv({ cls: "cypher-history-empty" });
+      empty.createEl("p", { text: "No saved conversations yet." });
+      return;
+    }
+
+    for (const conv of all) {
+      const item = listEl.createDiv({ cls: "cypher-history-item" });
+      if (this.currentConversation?.id === conv.id) {
+        item.addClass("is-active");
+      }
+
+      const topRow = item.createDiv({ cls: "cypher-history-item-top" });
+      const titleSpan = topRow.createSpan({ text: conv.title, cls: "cypher-history-item-title" });
+
+      const actions = topRow.createDiv({ cls: "cypher-history-actions" });
+      const itemRenameBtn = actions.createEl("button", {
+        cls: "cypher-btn-sm",
+        text: "✎",
+        title: "Rename",
+      });
+      itemRenameBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const newTitle = window.prompt("Enter new conversation title:", conv.title);
+        if (newTitle && newTitle.trim()) {
+          await this.plugin.conversationService.rename(conv.id, newTitle.trim());
+          if (this.currentConversation?.id === conv.id) {
+            this.currentConversation.title = newTitle.trim();
+            this.updateSubheaderTitle();
+          }
+          await this.renderHistoryDrawer(container);
+        }
+      };
+
+      const itemDeleteBtn = actions.createEl("button", {
+        cls: "cypher-btn-sm cypher-btn-danger",
+        text: "✕",
+        title: "Delete",
+      });
+      itemDeleteBtn.onclick = async (e) => {
+        e.stopPropagation();
+        await this.deleteConversation(conv.id);
+      };
+
+      const metaRow = item.createDiv({ cls: "cypher-history-item-meta" });
+      const dateStr = this.formatDate(conv.updatedAt);
+      metaRow.createSpan({ text: dateStr });
+      metaRow.createSpan({ text: `${conv.messages.length} msg${conv.messages.length === 1 ? "" : "s"}` });
+
+      item.onclick = async () => {
+        await this.selectConversation(conv.id);
+      };
+    }
+  }
+
+  private formatDate(timestamp: number): string {
+    const d = new Date(timestamp);
+    const now = new Date();
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+
+    if (isToday) {
+      return `Today, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    }
+
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday =
+      d.getDate() === yesterday.getDate() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getFullYear() === yesterday.getFullYear();
+
+    if (isYesterday) {
+      return `Yesterday, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    }
+
+    return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  public async selectConversation(id: string): Promise<void> {
+    const conv = await this.plugin.conversationService.get(id);
+    if (conv) {
+      this.currentConversation = conv;
+      this.showHistory = false;
+      this.updateSubheaderTitle();
+      this.renderContentArea();
+    }
+  }
+
+  public async startNewConversation(): Promise<void> {
+    this.currentConversation = await this.plugin.conversationService.create("New Chat");
+    this.showHistory = false;
+    this.updateSubheaderTitle();
+    this.renderContentArea();
+    if (this.inputEl) {
+      this.inputEl.focus();
+    }
+  }
+
+  public async deleteCurrentConversation(): Promise<void> {
+    if (!this.currentConversation) return;
+    const toDeleteId = this.currentConversation.id;
+    await this.deleteConversation(toDeleteId);
+  }
+
+  public async deleteConversation(id: string): Promise<void> {
+    await this.plugin.conversationService.delete(id);
+    new Notice("Conversation deleted.");
+
+    if (this.currentConversation?.id === id) {
+      const remaining = await this.plugin.conversationService.getAll();
+      if (remaining.length > 0) {
+        this.currentConversation = remaining[0];
+      } else {
+        this.currentConversation = await this.plugin.conversationService.create("New Chat");
+      }
+    }
+
+    this.updateSubheaderTitle();
+    this.renderContentArea();
+  }
+
+  private promptRenameConversation(): void {
+    if (!this.currentConversation) return;
+    const current = this.currentConversation.title;
+    const newTitle = window.prompt("Rename conversation:", current);
+    if (newTitle && newTitle.trim()) {
+      this.currentConversation.title = newTitle.trim();
+      this.plugin.conversationService.rename(this.currentConversation.id, newTitle.trim());
+      this.updateSubheaderTitle();
+    }
   }
 
   private renderMessagesArea(container: HTMLElement): void {
@@ -107,12 +375,14 @@ export class CypherChatView extends ItemView {
     if (!this.boxEl) return;
     this.boxEl.empty();
 
-    if (this.messages.length === 0) {
+    const messages = this.currentConversation?.messages || [];
+
+    if (messages.length === 0) {
       this.renderEmpty(this.boxEl);
       return;
     }
 
-    for (const msg of this.messages) {
+    for (const msg of messages) {
       if (msg.role === "system") continue;
       this.renderMessage(this.boxEl, msg);
     }
@@ -305,11 +575,11 @@ export class CypherChatView extends ItemView {
   }
 
   private renderInputArea(container: HTMLElement): void {
-    const area = container.createDiv({ cls: "cypher-chat-input-area" });
+    this.inputAreaEl = container.createDiv({ cls: "cypher-chat-input-area" });
 
-    this.statusEl = area.createDiv({ cls: "cypher-chat-status is-hidden" });
+    this.statusEl = this.inputAreaEl.createDiv({ cls: "cypher-chat-status is-hidden" });
 
-    const row = area.createDiv({ cls: "cypher-chat-input-row" });
+    const row = this.inputAreaEl.createDiv({ cls: "cypher-chat-input-row" });
 
     this.inputEl = row.createEl("textarea", {
       placeholder: "Ask Cypher anything about your vault...",
@@ -345,6 +615,16 @@ export class CypherChatView extends ItemView {
       return;
     }
 
+    if (!this.currentConversation) {
+      this.currentConversation = await this.plugin.conversationService.create("New Chat");
+    }
+
+    if (this.currentConversation.messages.length === 0 && this.currentConversation.title === "New Chat") {
+      const generatedTitle = this.plugin.conversationService.generateTitleFromContent(text);
+      this.currentConversation.title = generatedTitle;
+      this.updateSubheaderTitle();
+    }
+
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       role: "user",
@@ -352,7 +632,10 @@ export class CypherChatView extends ItemView {
       timestamp: Date.now(),
     };
 
-    this.messages.push(userMsg);
+    this.currentConversation.messages.push(userMsg);
+    await this.plugin.conversationService.save(this.currentConversation);
+    this.updateHistoryButtonLabel();
+
     this.inputEl.value = "";
     this.renderMessages();
 
@@ -361,7 +644,7 @@ export class CypherChatView extends ItemView {
     this.setStatus("Cypher is thinking and querying vault...");
 
     try {
-      const assistantMsg = await this.plugin.chatService.sendMessage(this.messages, {
+      const assistantMsg = await this.plugin.chatService.sendMessage(this.currentConversation.messages, {
         topK: this.k,
         similarityThreshold: this.plugin.settings.chatSimilarityThreshold,
         onToolCall: (_tc, data) => {
@@ -373,7 +656,9 @@ export class CypherChatView extends ItemView {
         },
       });
 
-      this.messages.push(assistantMsg);
+      this.currentConversation.messages.push(assistantMsg);
+      await this.plugin.conversationService.save(this.currentConversation);
+      this.updateHistoryButtonLabel();
       this.renderMessages();
     } catch (err: unknown) {
       const error = err instanceof Error ? err.message : String(err);
@@ -391,7 +676,9 @@ export class CypherChatView extends ItemView {
         content: `**Error communicating with AI model:**\n${error}\n\n${help}`,
         timestamp: Date.now(),
       };
-      this.messages.push(errMsg);
+      this.currentConversation.messages.push(errMsg);
+      await this.plugin.conversationService.save(this.currentConversation);
+      this.updateHistoryButtonLabel();
       this.renderMessages();
     } finally {
       this.generating = false;

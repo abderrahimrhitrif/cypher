@@ -1,6 +1,7 @@
 import { Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 import { DEFAULT_SETTINGS } from "./settings";
 import { ChatService } from "./services/chatService";
+import { ConversationService } from "./services/conversationService";
 import { EmbeddingService } from "./services/embeddingService";
 import { IndexerService } from "./services/indexerService";
 import { VectorDbService } from "./services/vectorDbService";
@@ -16,6 +17,7 @@ export default class CypherPlugin extends Plugin {
   public vectorDbService!: VectorDbService;
   public indexerService!: IndexerService;
   public chatService!: ChatService;
+  public conversationService!: ConversationService;
 
   private statusEl: HTMLElement | null = null;
   private debounces: Map<string, NodeJS.Timeout> = new Map();
@@ -32,6 +34,7 @@ export default class CypherPlugin extends Plugin {
       dir,
       this.settings.dimension
     );
+    this.conversationService = new ConversationService();
     this.indexerService = new IndexerService(
       this.app.vault,
       this.settings,
@@ -50,6 +53,12 @@ export default class CypherPlugin extends Plugin {
       await this.vectorDbService.init(this.settings.dimension);
     } catch (err) {
       console.error("[Cypher] Error initializing vector database:", err);
+    }
+
+    try {
+      await this.conversationService.init();
+    } catch (err) {
+      console.error("[Cypher] Error initializing conversations:", err);
     }
 
     this.registerView(

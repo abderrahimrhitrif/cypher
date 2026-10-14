@@ -152,7 +152,18 @@ The chat service uses a strict grounding system prompt:
 
 ---
 
-### 3. Quick Semantic Search Modal
+### 3. Conversation Storage & History Browsing
+
+Cypher persists chat conversations locally using **IndexedDB** (`cypher_db`), avoiding full-file JSON serialization on every turn:
+- **Object Store**: `conversations` store keyed by unique conversation ID (`conv-{timestamp}-{rand}`).
+- **Index**: Numeric index on `updatedAt` for retrieval of conversation lists ordered from newest to oldest.
+- **State Preservation**: Persists complete message histories and structured `toolResult` metadata (queries, matched chunks, similarity scores, tags). When an old conversation is reopened, all past tool cards and assistant citations are fully restored.
+- **Auto-Titling**: New conversations automatically derive their title from the first user prompt (truncated to ~40 characters on word boundaries).
+- **History Drawer**: An in-place drawer enables browsing past conversations, viewing timestamps and message counts, renaming titles, deleting individual chats, and resuming previous interactions.
+
+---
+
+### 4. Quick Semantic Search Modal
 
 For searching without chatting, Cypher provides a dedicated modal (`Ctrl/Cmd + P` -> `Cypher: Semantic Search Vault`):
 1. User types a query.
@@ -168,12 +179,14 @@ For searching without chatting, Cypher provides a dedicated modal (`Ctrl/Cmd + P
 |---|---|---|
 | Vector Database | `@orama/orama` v3.1.18 | Runs in-memory in the Obsidian Electron/browser thread |
 | DB Persistence | `@orama/plugin-data-persistence` | Serializes schema and vector index to JSON |
+| Conversation Store | IndexedDB (`cypher_db`) | Object store with `updatedAt` index and atomic transactions |
 | Similarity Metric | Cosine similarity | Supported natively by Orama vector property |
 | Change Detection | FNV-1a 32-bit hash | Fast non-cryptographic hash evaluated per note |
 | API Format | OpenAI-compatible HTTP | Endpoints: `/embeddings` and `/chat/completions` |
 | Chunking Logic | Structure-aware regex parser | Splits by headings, paragraphs, sliding window |
 | Rate Limit Handling | Exponential backoff + jitter | Handles HTTP 429 and 503 |
 | UI Framework | Native Obsidian DOM API | Lightweight DOM construction, MarkdownRenderer |
+
 
 ---
 
@@ -227,17 +240,18 @@ cypher/
 │   ├── settings.ts                # Default values and provider presets
 │   ├── services/
 │   │   ├── chunkingService.ts     # Markdown parser, heading splitter, context injector, FNV-1a
+│   │   ├── conversationService.ts # IndexedDB conversation storage, history CRUD, auto-titling
 │   │   ├── embeddingService.ts    # HTTP client for embeddings with rate-limit retry logic
 │   │   ├── vectorDbService.ts     # Orama lifecycle: init, insert, remove, search, persistence
 │   │   ├── indexerService.ts      # Vault indexing coordinator, file hashing, pause/cancel
 │   │   └── chatService.ts         # Chat completions client, tool definitions, tool execution loop
 │   └── ui/
-│       ├── chatView.ts            # Sidebar chat view, message list, collapsible tool result cards
+│       ├── chatView.ts            # Sidebar chat view, message list, history drawer, tool cards
 │       ├── searchModal.ts         # Quick vector search modal dialog
 │       ├── onboardingModal.ts     # Initial setup modal with connection test & dimension discovery
 │       └── settingsTab.ts         # Settings tab UI
 ├── tests/
-│   └── test-pipeline.ts           # Test suite covering chunking, Orama persistence, search, tools
+│   └── test-pipeline.ts           # Test suite covering chunking, Orama, tools, conversation lifecycle
 ├── esbuild.config.mjs             # esbuild configuration
 ├── manifest.json                  # Obsidian plugin manifest
 ├── package.json                   # Dependencies and scripts
@@ -264,6 +278,8 @@ npm test
 6. **Document Deletion**: Ensures deleted document chunks are fully evicted from the vector index.
 7. **Dual-API Separation**: Confirms embedding and chat configurations can use separate URLs and keys.
 8. **Tool Routing**: Verifies `list_notes` tag extraction (frontmatter and inline) and directory filtering.
+9. **Conversation Storage Lifecycle**: Tests IndexedDB store transactions, chronological sorting by `updatedAt`, `toolResult` persistence, prompt auto-titling, renaming, and atomic deletions.
+
 
 ---
 

@@ -114,3 +114,12 @@ export interface ChatMessage {
   name?: string;
   toolResult?: ChatToolResult;
 }
+
+export interface Conversation {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+}
+

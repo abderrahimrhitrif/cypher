@@ -292,11 +292,122 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   console.log("✓ list_notes tag and directory filters verified.");
   console.log("✓ System prompt includes list_notes instructions.");
 
-  console.log("\n✅ ALL TESTS (INCLUDING LIST_NOTES TOOL) PASSED SUCCESSFULLY!");
+  console.log("\n=== 8. Testing Conversation Storage Lifecycle ===");
+  const { ConversationService } = require("../src/services/conversationService");
+  const convoService = new ConversationService();
+  await convoService.init();
+
+  const c1 = await convoService.create("Research on Transformers");
+  if (!c1.id.startsWith("conv-") || c1.title !== "Research on Transformers") {
+    throw new Error("Failed to create initial conversation");
+  }
+  console.log(`✓ Created conversation 1: ${c1.id} ("${c1.title}")`);
+
+  await new Promise((r) => setTimeout(r, 10));
+  const c2 = await convoService.create("Recipe Collection");
+  console.log(`✓ Created conversation 2: ${c2.id} ("${c2.title}")`);
+
+  let allConvos = await convoService.getAll();
+  if (allConvos.length !== 2) {
+    throw new Error(`Expected 2 conversations, got ${allConvos.length}`);
+  }
+  if (allConvos[0].id !== c2.id) {
+    throw new Error("Expected newest conversation (c2) to be first in list");
+  }
+  console.log("✓ Conversations correctly sorted by updatedAt descending.");
+
+  c1.messages.push({
+    id: "msg-user-1",
+    role: "user",
+    content: "What are attention mechanisms?",
+    timestamp: Date.now(),
+  });
+  c1.messages.push({
+    id: "msg-asst-1",
+    role: "assistant",
+    content: "Attention mechanisms allow models to focus on relevant context.",
+    timestamp: Date.now(),
+    toolResult: {
+      toolName: "query_vault",
+      query: "attention mechanisms",
+      k: 3,
+      results: [
+        {
+          id: "chunk-1",
+          score: 0.94,
+          path: "ai/transformers.md",
+          title: "Transformers",
+          heading: "Attention",
+          text: "Scaled dot-product attention formula...",
+          chunkIndex: 0,
+        },
+      ],
+    },
+  });
+  await convoService.save(c1);
+
+  allConvos = await convoService.getAll();
+  if (allConvos[0].id !== c1.id) {
+    throw new Error("c1 should now be first after receiving new message updates");
+  }
+  const retrievedC1 = await convoService.get(c1.id);
+  if (!retrievedC1 || retrievedC1.messages.length !== 2) {
+    throw new Error("Failed to retrieve c1 with complete messages");
+  }
+  if (retrievedC1.messages[1].toolResult?.toolName !== "query_vault") {
+    throw new Error("toolResult metadata was not preserved in conversation storage");
+  }
+  console.log("✓ Messages and toolResult metadata successfully persisted and restored.");
+
+  const title1 = convoService.generateTitleFromContent("What is RAG in machine learning?");
+  if (title1 !== "What is RAG in machine learning?") {
+    throw new Error(`Title generation failed: "${title1}"`);
+  }
+  const title2 = convoService.generateTitleFromContent(
+    "### Very long paragraph discussing advanced retrieval mechanisms, embedding indexing, and vector similarity performance in local Obsidian vaults"
+  );
+  if (title2.includes("#") || title2.length > 45 || !title2.endsWith("...")) {
+    throw new Error(`Title truncation failed: "${title2}"`);
+  }
+  const title3 = convoService.generateTitleFromContent("   ");
+  if (title3 !== "New Chat") {
+    throw new Error("Empty title fallback failed");
+  }
+  console.log(`✓ Title generation verified: "${title1}" and "${title2}"`);
+
+  const renamed = await convoService.rename(c1.id, "Renamed Transformers Chat");
+  if (!renamed) throw new Error("Rename returned false");
+  const checkRename = await convoService.get(c1.id);
+  if (checkRename?.title !== "Renamed Transformers Chat") {
+    throw new Error("Title did not update in storage");
+  }
+  console.log("✓ Conversation title rename verified.");
+
+  const deleted = await convoService.delete(c2.id);
+  if (!deleted) throw new Error("Delete returned false");
+  const checkDeleted = await convoService.get(c2.id);
+  if (checkDeleted !== undefined) {
+    throw new Error("Deleted conversation still exists");
+  }
+  const remaining = await convoService.getAll();
+  if (remaining.length !== 1 || remaining[0].id !== c1.id) {
+    throw new Error("Remaining conversations count or content mismatch");
+  }
+  console.log("✓ Conversation deletion verified.");
+
+  await convoService.clearAll();
+  const emptyList = await convoService.getAll();
+  if (emptyList.length !== 0) {
+    throw new Error("clearAll did not empty store");
+  }
+  console.log("✓ clearAll verified.");
+
+  console.log("\n✅ ALL TESTS (INCLUDING CONVERSATION STORAGE LIFECYCLE) PASSED SUCCESSFULLY!");
 }
 
 runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
+
 
