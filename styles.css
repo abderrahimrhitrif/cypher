@@ -577,11 +577,78 @@
   overflow-x: auto;
 }
 
+.cypher-thinking-block {
+  margin-bottom: 0.45rem;
+  border-radius: 8px;
+  background: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
+  overflow: hidden;
+  font-size: 0.82rem;
+}
+
+.cypher-thinking-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.65rem;
+  background: var(--background-modifier-hover);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cypher-thinking-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cypher-thinking-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cypher-thinking-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.cypher-thinking-toggle-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.cypher-thinking-body {
+  padding: 0.75rem;
+  font-family: var(--font-monospace);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 350px;
+  overflow-y: auto;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.cypher-thinking-body.is-collapsed {
+  display: none;
+}
+
 .cypher-tool-card {
   border-radius: 8px;
   background: var(--background-secondary-alt);
   border: 1px solid var(--background-modifier-border);
   margin-bottom: 0.35rem;
+
   overflow: hidden;
   font-size: 0.82rem;
 }

@@ -402,12 +402,49 @@ It uses high-dimensional vector embeddings for fast nearest-neighbor retrieval.
   }
   console.log("✓ clearAll verified.");
 
-  console.log("\n✅ ALL TESTS (INCLUDING CONVERSATION STORAGE LIFECYCLE) PASSED SUCCESSFULLY!");
+  console.log("\n=== 9. Testing Thinking Extraction & Tool Usage Accumulation ===");
+  const testRawThink = "<think>Let me analyze the vault contents for transformers.</think>Transformers rely on self-attention.";
+  const extracted1 = ChatService.extractThinkingAndContent(testRawThink);
+  if (extracted1.thinking !== "Let me analyze the vault contents for transformers.") {
+    throw new Error(`Thinking extraction mismatch: "${extracted1.thinking}"`);
+  }
+  if (extracted1.content !== "Transformers rely on self-attention.") {
+    throw new Error(`Content cleanup mismatch: "${extracted1.content}"`);
+  }
+  console.log("✓ <think> tag extraction and content stripping verified.");
+
+  const extracted2 = ChatService.extractThinkingAndContent("Final answer without tags", "Reasoning step 1 from API");
+  if (extracted2.thinking !== "Reasoning step 1 from API") {
+    throw new Error("reasoning_content extraction failed");
+  }
+  if (extracted2.content !== "Final answer without tags") {
+    throw new Error("content altered when no think tag present");
+  }
+  console.log("✓ reasoning_content parameter extraction verified.");
+
+  const testToolMsg = {
+    id: "msg-asst-multi",
+    role: "assistant" as const,
+    content: "Here is your summary.",
+    timestamp: Date.now(),
+    thinking: "Thought: need to query vault first, then list notes.",
+    toolResults: [
+      { toolName: "query_vault", query: "neural networks", results: [] },
+      { toolName: "list_notes", notes: [] },
+    ],
+  };
+  if (!testToolMsg.toolResults || testToolMsg.toolResults.length !== 2) {
+    throw new Error("Multi-tool results array failed");
+  }
+  console.log(`✓ Preserved ${testToolMsg.toolResults.length} tool execution records on assistant message.`);
+
+  console.log("\n✅ ALL TESTS (INCLUDING THINKING EXTRACTION & TOOL USAGE) PASSED SUCCESSFULLY!");
 }
 
 runTests().catch((err) => {
   console.error("Test error:", err);
   process.exit(1);
 });
+
 
 

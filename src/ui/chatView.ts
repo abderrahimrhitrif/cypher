@@ -424,7 +424,15 @@ export class CypherChatView extends ItemView {
       cls: `cypher-message cypher-message-${msg.role}`,
     });
 
-    if (msg.toolResult) {
+    if (msg.thinking) {
+      this.renderThinkingBlock(msgEl, msg.thinking);
+    }
+
+    if (msg.toolResults && msg.toolResults.length > 0) {
+      for (const res of msg.toolResults) {
+        this.renderToolCard(msgEl, res);
+      }
+    } else if (msg.toolResult) {
       this.renderToolCard(msgEl, msg.toolResult);
     }
 
@@ -446,8 +454,46 @@ export class CypherChatView extends ItemView {
     }
   }
 
+  private renderThinkingBlock(container: HTMLElement, thinking: string): void {
+    const block = container.createDiv({ cls: "cypher-thinking-block" });
+    const header = block.createDiv({ cls: "cypher-thinking-header" });
+
+    const titleBox = header.createDiv({ cls: "cypher-thinking-title" });
+    titleBox.createSpan({ text: "Thought Process", cls: "cypher-thinking-label" });
+
+    const toggleBtn = header.createEl("button", {
+      text: "Show thinking ▾",
+      cls: "cypher-thinking-toggle-btn",
+    });
+
+    const body = block.createDiv({ cls: "cypher-thinking-body is-collapsed" });
+    body.setText(thinking);
+
+    const toggle = () => {
+      const isCollapsed = body.hasClass("is-collapsed");
+      if (isCollapsed) {
+        body.removeClass("is-collapsed");
+        toggleBtn.setText("Hide thinking ▴");
+      } else {
+        body.addClass("is-collapsed");
+        toggleBtn.setText("Show thinking ▾");
+      }
+    };
+
+    header.onclick = (e) => {
+      if (e.target !== toggleBtn) {
+        toggle();
+      }
+    };
+    toggleBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggle();
+    };
+  }
+
   private renderToolCard(container: HTMLElement, result: ChatToolResult): void {
     const card = container.createDiv({ cls: "cypher-tool-card" });
+
 
     if (result.notes) {
       const header = card.createDiv({ cls: "cypher-tool-header" });

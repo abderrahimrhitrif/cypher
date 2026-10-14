@@ -109,11 +109,14 @@ export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   timestamp: number;
+  thinking?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
   toolResult?: ChatToolResult;
+  toolResults?: ChatToolResult[];
 }
+
 
 export interface Conversation {
   id: string;

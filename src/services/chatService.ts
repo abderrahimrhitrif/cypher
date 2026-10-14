@@ -278,6 +278,23 @@ export class ChatService {
     return `Found ${notes.length} notes in the vault:\n${lines.join("\n")}`;
   }
 
+  public static extractThinkingAndContent(
+    rawContent: string,
+    rawReasoning?: string
+  ): { content: string; thinking: string } {
+    let content = rawContent || "";
+    let thinking = (rawReasoning || "").trim();
+
+    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch) {
+      const parsed = thinkMatch[1].trim();
+      thinking = thinking ? `${thinking}\n\n${parsed}` : parsed;
+      content = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    }
+
+    return { content, thinking };
+  }
+
   public async sendMessage(
     history: ChatMessage[],
     opts: SendMessageOptions = {}
@@ -327,7 +344,8 @@ export class ChatService {
 
     let turn = 0;
     const maxTurns = 3;
-    let toolResult: ChatToolResult | undefined = undefined;
+    const accumulatedToolResults: ChatToolResult[] = [];
+    let accumulatedThinking = "";
 
     while (turn < maxTurns) {
       turn++;
@@ -367,6 +385,18 @@ export class ChatService {
       const choice = resJson.choices[0];
       const msg = choice.message;
 
+      const { content: cleanContent, thinking: turnThinking } =
+        ChatService.extractThinkingAndContent(
+          msg.content || "",
+          (msg as Record<string, unknown>).reasoning_content as string | undefined
+        );
+
+      if (turnThinking) {
+        accumulatedThinking = accumulatedThinking
+          ? `${accumulatedThinking}\n\n${turnThinking}`
+          : turnThinking;
+      }
+
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         messages.push({
           role: "assistant",
@@ -385,7 +415,8 @@ export class ChatService {
 
             const query = args.query || "";
             const results = await this.executeQueryVaultTool(query, k, threshold);
-            toolResult = { toolName: "query_vault", query, k, results };
+            const toolResult: ChatToolResult = { toolName: "query_vault", query, k, results };
+            accumulatedToolResults.push(toolResult);
 
             if (opts.onToolCall) {
               opts.onToolCall(tc, { query, k, results });
@@ -407,7 +438,8 @@ export class ChatService {
             }
 
             const notes = this.executeListNotesTool(args.tag, args.directory);
-            toolResult = { toolName: "list_notes", notes };
+            const toolResult: ChatToolResult = { toolName: "list_notes", notes };
+            accumulatedToolResults.push(toolResult);
 
             if (opts.onToolCall) {
               opts.onToolCall(tc, { notes });
@@ -430,9 +462,11 @@ export class ChatService {
       return {
         id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         role: "assistant",
-        content: msg.content || "",
+        content: cleanContent,
         timestamp: Date.now(),
-        toolResult,
+        thinking: accumulatedThinking.trim() || undefined,
+        toolResult: accumulatedToolResults[0],
+        toolResults: accumulatedToolResults.length > 0 ? accumulatedToolResults : undefined,
       };
     }
 
