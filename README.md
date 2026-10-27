@@ -29,10 +29,5 @@ npm test
 npm run build
 ```
 
-## CV Bullet Points
-- Developed Cypher, a local-first RAG and semantic search plugin for Obsidian in TypeScript, featuring structure-aware Markdown chunking, FNV-1a change detection, and batched embeddings.
-- Implemented Orama vector database integration with disk persistence and LLM tool calling (`query_vault`, `list_notes`) for context-grounded chat.
-- Designed robust error handling with exponential backoff rate-limit retries and local IndexedDB conversation storage.
-
 ## Claims to Avoid
 - Do not claim commercial SaaS product deployment or multi-tenant cloud hosting.
