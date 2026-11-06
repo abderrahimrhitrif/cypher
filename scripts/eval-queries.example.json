@@ -1,0 +1,14 @@
+[
+  {
+    "query": "how are notes split into chunks",
+    "relevant": ["Architecture.md"]
+  },
+  {
+    "query": "where is the vector index stored",
+    "relevant": ["Architecture.md", "Storage.md"]
+  },
+  {
+    "query": "what model is used for chat",
+    "relevant": ["Settings.md"]
+  }
+]
